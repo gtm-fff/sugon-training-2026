@@ -6,21 +6,9 @@ const COMPANIES = [
   '一连', '二连', '三连', '四连', '五连', '六连', '七连', '八连',
   '九连', '十连', '十一连', '十二连', '十三连', '十四连', '十五连', '十六连',
 ];
-const ALBUM_COPY = [
-  ['一往无前，共启新程', '晨光集结'], ['同心协作，双向成长', '协作挑战'],
-  ['聚智共创，步履不停', '创新研讨'], ['四海同心，勇往直前', '青春接力'],
-  ['敢想敢为，自信表达', '成果汇报'], ['并肩远行，韧性生长', '户外拓展'],
-  ['智创未来，工程同行', '技术共创'], ['八方英才，共筑曙光', '团队庆祝'],
-  ['责任在肩，守护同行', '应急训练'], ['十全协作，迎难而上', '障碍协作'],
-  ['初心如炬，向新而行', '启航时刻'], ['全员同框，定格青春', '团队合影'],
-  ['拾光同行，温暖相聚', '夜间共创'], ['实干担当，合力成事', '会场协作'],
-  ['活力全开，默契制胜', '团队运动'], ['荣聚曙光，梦想起航', '结营庆祝'],
-];
 const COMPANY_ALBUMS = COMPANIES.map((name, index) => ({
   name,
   number: String(index + 1).padStart(2, '0'),
-  slogan: ALBUM_COPY[index][0],
-  scene: ALBUM_COPY[index][1],
   demoUrl: `/company-demo/${String(index + 1).padStart(2, '0')}.jpg`,
 }));
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -46,6 +34,58 @@ type GalleryItem = {
   createdAt: string;
   updatedAt: string;
 };
+
+type CompanyAlbum = (typeof COMPANY_ALBUMS)[number];
+
+function CompanyAlbumCard({ album, items }: { album: CompanyAlbum; items: GalleryItem[] }) {
+  const media = [
+    { id: `demo-${album.number}`, title: '', description: '', mediaType: 'image/jpeg', url: album.demoUrl, isDemo: true },
+    ...items.map((item) => ({ ...item, url: `/api/gallery/${item.id}/media?v=${item.updatedAt}`, isDemo: false })),
+  ];
+  const [index, setIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const active = media[index % media.length];
+
+  useEffect(() => {
+    if (paused || media.length < 2) return;
+    const timer = window.setInterval(() => setIndex((current) => (current + 1) % media.length), 5000);
+    return () => window.clearInterval(timer);
+  }, [paused, media.length]);
+
+  function move(delta: number) {
+    setIndex((current) => (current + delta + media.length) % media.length);
+  }
+
+  return (
+    <article className="company-album-card" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+      <div className="company-album-media">
+        {active.mediaType.startsWith('video/') ? (
+          <video src={active.url} controls muted playsInline onPlay={() => setPaused(true)} onPause={() => setPaused(false)} />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={active.url} alt={`${album.name}${active.isDemo ? '演示封面' : active.title || '投稿素材'}`} />
+        )}
+        <span className="company-album-badge"><b>{album.number}</b>{album.name}</span>
+        <span className="company-album-position">{String((index % media.length) + 1).padStart(2, '0')} / {String(media.length).padStart(2, '0')}</span>
+        {media.length > 1 && (
+          <div className="company-album-controls">
+            <button onClick={() => move(-1)} aria-label={`${album.name}上一份素材`}>←</button>
+            <button onClick={() => move(1)} aria-label={`${album.name}下一份素材`}>→</button>
+          </div>
+        )}
+      </div>
+      <div className="company-album-copy">
+        <div><span>COMPANY {album.number}</span><small>{items.length} 份用户投稿</small></div>
+        {active.isDemo ? (
+          <><h3>演示封面</h3><p className="album-empty-copy">暂无用户投稿。上传后，这里将显示用户填写的素材标题和故事说明。</p></>
+        ) : (
+          <><h3>{active.title || '未填写素材标题'}</h3><p>{active.description || '未填写故事说明'}</p></>
+        )}
+        {media.length > 1 && <div className="company-album-dots">{media.map((item, itemIndex) => <button key={item.id} className={itemIndex === index % media.length ? 'active' : ''} onClick={() => setIndex(itemIndex)} aria-label={`${album.name}第 ${itemIndex + 1} 份素材`} />)}</div>}
+      </div>
+    </article>
+  );
+}
 
 function formatBytes(bytes: number) {
   return `${(bytes / 1024).toFixed(0)} KB`;
@@ -98,9 +138,6 @@ export default function Home() {
   const [message, setMessage] = useState('');
   const [createdCredential, setCreatedCredential] = useState('');
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([]);
-  const [albumIndex, setAlbumIndex] = useState(0);
-  const [mediaIndex, setMediaIndex] = useState(0);
-  const [galleryPaused, setGalleryPaused] = useState(false);
 
   useEffect(() => {
     fetch('/api/gallery')
@@ -108,15 +145,6 @@ export default function Home() {
       .then((data: { items?: GalleryItem[] }) => setGalleryItems(data.items || []))
       .catch(() => setGalleryItems([]));
   }, []);
-
-  useEffect(() => {
-    if (galleryPaused) return;
-    const timer = window.setInterval(() => {
-      setAlbumIndex((current) => (current + 1) % COMPANY_ALBUMS.length);
-      setMediaIndex(0);
-    }, 6000);
-    return () => window.clearInterval(timer);
-  }, [galleryPaused]);
 
   function resetFeedback() {
     setMessage('');
@@ -214,19 +242,6 @@ export default function Home() {
     switchMode(next);
     setWorkspaceOpen(true);
     window.setTimeout(() => document.getElementById('upload')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
-  }
-
-  const activeAlbum = COMPANY_ALBUMS[albumIndex];
-  const liveMedia = galleryItems.filter((item) => item.company === activeAlbum.name);
-  const albumMedia = [
-    { id: `demo-${activeAlbum.number}`, title: activeAlbum.scene, description: activeAlbum.slogan, mediaType: 'image/jpeg', url: activeAlbum.demoUrl },
-    ...liveMedia.map((item) => ({ ...item, url: `/api/gallery/${item.id}/media?v=${item.updatedAt}` })),
-  ];
-  const activeMedia = albumMedia[mediaIndex % albumMedia.length];
-
-  function showAlbum(index: number) {
-    setAlbumIndex((index + COMPANY_ALBUMS.length) % COMPANY_ALBUMS.length);
-    setMediaIndex(0);
   }
 
   return (
@@ -330,54 +345,13 @@ export default function Home() {
         <div className="gallery-heading">
           <div>
             <p className="eyebrow"><span /> COMPANY ALBUMS</p>
-            <h2 id="gallery-title">一连一册，轮播每一份青春。</h2>
+            <h2 id="gallery-title">十六个连队，十六本相册。</h2>
           </div>
-          <p>每个连队拥有独立相册。上传的照片和视频会自动进入所属连队，与演示封面一起展示。</p>
+          <p>所有连队同时展示。每个相册内部独立轮播，真实投稿会显示用户填写的素材标题和故事说明。</p>
         </div>
 
-        <div
-          className={`album-carousel ${galleryPaused ? 'paused' : ''}`}
-          onMouseEnter={() => setGalleryPaused(true)}
-          onMouseLeave={() => setGalleryPaused(false)}
-          onFocus={() => setGalleryPaused(true)}
-          onBlur={() => setGalleryPaused(false)}
-        >
-          <div className="album-media" aria-live="polite">
-            {activeMedia.mediaType.startsWith('video/') ? (
-              <video src={activeMedia.url} controls muted playsInline />
-            ) : (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={activeMedia.url} alt={`${activeAlbum.name}相册：${activeMedia.title}`} />
-            )}
-            <span className="album-watermark">{activeAlbum.number}</span>
-            <span className="album-scene">{activeMedia.title}</span>
-          </div>
-          <div className="album-copy">
-            <p>COMPANY {activeAlbum.number} / 16</p>
-            <h3>{activeAlbum.name}</h3>
-            <strong>{activeAlbum.slogan}</strong>
-            <p className="album-description">{activeMedia.description || '记录每一次并肩协作与共同成长。'}</p>
-            <div className="album-count"><span>{albumMedia.length}</span><small>份相册素材<br />含 1 张演示封面</small></div>
-            <div className="album-controls">
-              <button onClick={() => showAlbum(albumIndex - 1)} aria-label="上一个连队">←</button>
-              <span>{String(mediaIndex + 1).padStart(2, '0')} / {String(albumMedia.length).padStart(2, '0')}</span>
-              <button onClick={() => showAlbum(albumIndex + 1)} aria-label="下一个连队">→</button>
-            </div>
-            {albumMedia.length > 1 && (
-              <div className="media-dots" aria-label="相册内容">
-                {albumMedia.map((item, index) => <button key={item.id} className={index === mediaIndex ? 'active' : ''} onClick={() => setMediaIndex(index)} aria-label={`查看第 ${index + 1} 份素材`} />)}
-              </div>
-            )}
-            <div className="album-progress" key={albumIndex}><i /></div>
-          </div>
-        </div>
-
-        <div className="company-album-tabs" aria-label="选择连队相册">
-          {COMPANY_ALBUMS.map((album, index) => (
-            <button key={album.name} className={index === albumIndex ? 'active' : ''} onClick={() => showAlbum(index)}>
-              <span>{album.number}</span>{album.name}
-            </button>
-          ))}
+        <div className="company-album-grid">
+          {COMPANY_ALBUMS.map((album) => <CompanyAlbumCard key={album.name} album={album} items={galleryItems.filter((item) => item.company === album.name)} />)}
         </div>
       </section>
 

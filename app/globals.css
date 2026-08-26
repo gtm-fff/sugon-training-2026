@@ -137,39 +137,28 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .gallery-heading .eyebrow { margin-bottom: 15px; }
 .gallery-heading h2 { max-width: 680px; margin: 0; font-size: clamp(34px, 5vw, 56px); line-height: 1.12; letter-spacing: -.055em; }
 .gallery-heading > p { margin: 0 0 7px; color: var(--muted); font-size: 13px; line-height: 1.8; }
-.album-carousel { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, .65fr); min-height: 600px; color: white; background: var(--ink); box-shadow: 0 30px 80px rgba(41,32,24,.16); overflow: hidden; }
-.album-media { position: relative; min-width: 0; min-height: 600px; overflow: hidden; background: #25211e; }
-.album-media::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 45%, rgba(10,9,8,.72)); pointer-events: none; }
-.album-media img, .album-media video { width: 100%; height: 100%; min-height: 600px; object-fit: cover; animation: album-reveal .55s ease both; }
-.album-watermark { position: absolute; z-index: 1; right: 26px; top: 0; color: rgba(255,255,255,.17); font-size: clamp(110px, 15vw, 190px); font-weight: 1000; letter-spacing: -.1em; line-height: .9; }
-.album-scene { position: absolute; z-index: 2; left: 30px; bottom: 27px; padding: 8px 12px; color: white; background: var(--red); font-size: 11px; font-weight: 850; letter-spacing: .09em; }
-.album-copy { position: relative; display: flex; flex-direction: column; padding: 48px 35px 34px; background: linear-gradient(155deg, #191613 0%, #211d1a 58%, #0f3460 150%); overflow: hidden; }
-.album-copy::after { content: "SUGON"; position: absolute; right: -30px; bottom: 30px; color: rgba(255,255,255,.025); font: 1000 86px/1 Arial, sans-serif; transform: rotate(-90deg); }
-.album-copy > p:first-child { margin: 0 0 25px; color: #8f8881; font: 800 10px ui-monospace, monospace; letter-spacing: .15em; }
-.album-copy h3 { margin: 0; font-size: 54px; letter-spacing: -.06em; }
-.album-copy > strong { margin-top: 12px; color: #ff6570; font-size: 18px; line-height: 1.5; }
-.album-description { min-height: 64px; margin: 22px 0 0; color: #a9a29b; font-size: 12px; line-height: 1.8; }
-.album-count { display: flex; align-items: center; gap: 14px; margin: 30px 0 auto; padding: 20px 0; border-top: 1px solid #39342f; border-bottom: 1px solid #39342f; }
-.album-count span { font-size: 36px; font-weight: 950; }
-.album-count small { color: #8f8881; font-size: 9px; line-height: 1.6; }
-.album-controls { position: relative; z-index: 1; display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; gap: 10px; margin-top: 28px; }
-.album-controls button { width: 44px; height: 44px; color: white; background: transparent; border: 1px solid #4a443e; cursor: pointer; font-size: 18px; transition: .2s; }
-.album-controls button:hover { color: white; background: var(--red); border-color: var(--red); }
-.album-controls span { color: #9d958e; font: 700 10px ui-monospace, monospace; text-align: center; letter-spacing: .12em; }
-.media-dots { position: relative; z-index: 1; display: flex; justify-content: center; gap: 6px; margin-top: 15px; }
-.media-dots button { width: 18px; height: 3px; padding: 0; background: #4b4540; border: 0; cursor: pointer; }
-.media-dots button.active { background: var(--red); }
-.album-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,.08); }
-.album-progress i { display: block; width: 100%; height: 100%; background: var(--red); transform-origin: left; animation: album-progress 6s linear both; }
-.album-carousel.paused .album-progress i { animation-play-state: paused; }
-.company-album-tabs { display: grid; grid-template-columns: repeat(8, 1fr); border: 1px solid var(--line); border-top: 0; background: var(--cream); }
-.company-album-tabs button { display: flex; align-items: center; justify-content: center; gap: 7px; min-width: 0; padding: 15px 6px; color: #817a73; background: transparent; border: 0; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); cursor: pointer; font-size: 11px; font-weight: 750; }
-.company-album-tabs button:nth-child(8n) { border-right: 0; }
-.company-album-tabs button:nth-child(n+9) { border-bottom: 0; }
-.company-album-tabs button span { font: 800 9px ui-monospace, monospace; }
-.company-album-tabs button:hover, .company-album-tabs button.active { color: white; background: var(--red); }
-@keyframes album-progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-@keyframes album-reveal { from { opacity: .55; transform: scale(1.025); } to { opacity: 1; transform: scale(1); } }
+.company-album-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.company-album-card { min-width: 0; background: var(--cream); border: 1px solid var(--line); box-shadow: 0 12px 30px rgba(41,32,24,.06); overflow: hidden; transition: transform .2s, box-shadow .2s; }
+.company-album-card:hover { transform: translateY(-3px); box-shadow: 0 20px 45px rgba(41,32,24,.11); }
+.company-album-media { position: relative; aspect-ratio: 3 / 2; overflow: hidden; background: var(--ink); }
+.company-album-media::after { content: ""; position: absolute; inset: 45% 0 0; background: linear-gradient(transparent, rgba(12,10,9,.7)); pointer-events: none; }
+.company-album-media img, .company-album-media video { width: 100%; height: 100%; object-fit: cover; }
+.company-album-badge { position: absolute; z-index: 2; left: 14px; top: 14px; display: flex; align-items: center; gap: 7px; padding: 7px 10px; color: white; background: var(--red); font-size: 11px; font-weight: 850; }
+.company-album-badge b { font: 850 9px ui-monospace, monospace; }
+.company-album-position { position: absolute; z-index: 2; right: 13px; bottom: 12px; color: white; font: 750 9px ui-monospace, monospace; letter-spacing: .1em; }
+.company-album-controls { position: absolute; z-index: 3; left: 12px; bottom: 10px; display: flex; gap: 5px; }
+.company-album-controls button { width: 30px; height: 30px; color: white; background: rgba(17,14,12,.62); border: 1px solid rgba(255,255,255,.35); cursor: pointer; }
+.company-album-controls button:hover { background: var(--red); border-color: var(--red); }
+.company-album-copy { min-height: 188px; padding: 18px 18px 16px; }
+.company-album-copy > div:first-child { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 17px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.company-album-copy > div:first-child span { color: var(--red); font: 800 9px ui-monospace, monospace; letter-spacing: .1em; }
+.company-album-copy > div:first-child small { color: var(--muted); font-size: 9px; }
+.company-album-copy h3 { margin: 0 0 9px; overflow: hidden; font-size: 20px; letter-spacing: -.035em; text-overflow: ellipsis; white-space: nowrap; }
+.company-album-copy p { display: -webkit-box; min-height: 52px; margin: 0; overflow: hidden; color: var(--muted); font-size: 11px; line-height: 1.65; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.company-album-copy p.album-empty-copy { color: #9a938a; }
+.company-album-dots { display: flex; gap: 5px; margin-top: 12px; }
+.company-album-dots button { width: 18px; height: 3px; padding: 0; background: #d3ccc2; border: 0; cursor: pointer; }
+.company-album-dots button.active { background: var(--red); }
 
 footer { position: relative; z-index: 1; display: flex; justify-content: space-between; max-width: 1160px; margin: auto; padding: 28px 0 40px; color: #777069; border-top: 1px solid var(--line); font-size: 11px; }
 footer a { color: inherit; text-decoration: none; }
@@ -191,7 +180,7 @@ footer a:hover { color: var(--red); }
   .upload-launch { margin-inline: 22px; }
   .steps-rail { padding-inline: 25px; }
   .gallery-section { margin-inline: 22px; }
-  .album-carousel { grid-template-columns: 1.2fr .8fr; }
+  .company-album-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 680px) {
@@ -224,14 +213,9 @@ footer a:hover { color: var(--red); }
   .gallery-heading { display: block; padding: 0 10px; }
   .gallery-heading h2 { font-size: 38px; }
   .gallery-heading > p { margin-top: 18px; }
-  .album-carousel { display: block; min-height: 0; }
-  .album-media, .album-media img, .album-media video { min-height: 360px; height: 360px; }
-  .album-copy { min-height: 420px; padding: 32px 25px 28px; }
-  .album-copy h3 { font-size: 46px; }
-  .album-count { margin-top: 22px; }
-  .company-album-tabs { display: flex; overflow-x: auto; border-top: 0; scrollbar-width: none; }
-  .company-album-tabs::-webkit-scrollbar { display: none; }
-  .company-album-tabs button { flex: 0 0 84px; border-bottom: 0; }
+  .company-album-grid { grid-template-columns: 1fr; gap: 14px; }
+  .company-album-media { aspect-ratio: 16 / 10; }
+  .company-album-copy { min-height: 174px; }
   footer { margin: 0 20px; }
   .success-card { padding: 30px; box-shadow: 9px 9px 0 var(--red); }
 }
