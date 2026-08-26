@@ -60,10 +60,10 @@ function CompanyAlbumCard({ album, items }: { album: CompanyAlbum; items: Galler
     <article className="company-album-card" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
       <div className="company-album-media">
         {active.mediaType.startsWith('video/') ? (
-          <video src={active.url} controls muted playsInline onPlay={() => setPaused(true)} onPause={() => setPaused(false)} />
+          <video src={active.url} controls muted playsInline preload="metadata" onPlay={() => setPaused(true)} onPause={() => setPaused(false)} />
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={active.url} alt={`${album.name}${active.isDemo ? '演示封面' : active.title || '投稿素材'}`} />
+          <img src={active.url} alt={`${album.name}${active.isDemo ? '演示封面' : active.title || '投稿素材'}`} loading="lazy" decoding="async" fetchPriority="low" />
         )}
         <span className="company-album-badge"><b>{album.number}</b>{album.name}</span>
         <span className="company-album-position">{String((index % media.length) + 1).padStart(2, '0')} / {String(media.length).padStart(2, '0')}</span>
