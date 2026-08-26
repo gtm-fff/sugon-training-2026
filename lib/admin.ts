@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:workers';
+import type { AppEnv } from './data';
 
 const COOKIE_NAME = 'training_admin';
 const encoder = new TextEncoder();
@@ -9,7 +9,7 @@ function bytesToBase64Url(bytes: Uint8Array) {
   return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
 }
 
-async function signature(payload: string) {
+async function signature(env: AppEnv, payload: string) {
   const key = await crypto.subtle.importKey(
     'raw',
     encoder.encode(env.SESSION_SECRET || 'local-demo-session-secret-change-me'),
@@ -27,14 +27,14 @@ function sameText(a: string, b: string) {
   return mismatch === 0;
 }
 
-export function validAdminLogin(username: string, password: string) {
+export function validAdminLogin(env: AppEnv, username: string, password: string) {
   if (!env.ADMIN_USERNAME || !env.ADMIN_PASSWORD) return false;
   return sameText(username, env.ADMIN_USERNAME) && sameText(password, env.ADMIN_PASSWORD);
 }
 
-export async function createAdminCookie(request: Request) {
+export async function createAdminCookie(env: AppEnv, request: Request) {
   const payload = `${Date.now() + 8 * 60 * 60 * 1000}`;
-  const token = `${payload}.${await signature(payload)}`;
+  const token = `${payload}.${await signature(env, payload)}`;
   const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
   return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=28800${secure}`;
 }
@@ -48,13 +48,13 @@ function getCookie(request: Request) {
   return source.split(';').map((item) => item.trim()).find((item) => item.startsWith(`${COOKIE_NAME}=`))?.slice(COOKIE_NAME.length + 1) || '';
 }
 
-export async function isAdmin(request: Request) {
+export async function isAdmin(env: AppEnv, request: Request) {
   const [expires, providedSignature] = getCookie(request).split('.');
   if (!expires || !providedSignature || Number(expires) < Date.now()) return false;
-  return sameText(providedSignature, await signature(expires));
+  return sameText(providedSignature, await signature(env, expires));
 }
 
-export async function requireAdmin(request: Request) {
-  if (await isAdmin(request)) return null;
+export async function requireAdmin(env: AppEnv, request: Request) {
+  if (await isAdmin(env, request)) return null;
   return Response.json({ error: '管理员登录已失效，请重新登录' }, { status: 401 });
 }

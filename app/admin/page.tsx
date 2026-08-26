@@ -1,7 +1,6 @@
 'use client';
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 
 const COMPANIES = [
   '一连', '二连', '三连', '四连', '五连', '六连', '七连', '八连',
@@ -125,7 +124,7 @@ export default function AdminPage() {
   if (!authenticated) {
     return (
       <main className="admin-login-shell">
-        <Link className="admin-back" href="/">← 返回上传页面</Link>
+        <a className="admin-back" href="/">← 返回上传页面</a>
         <section className="admin-login-card">
           <div className="admin-login-brand"><span>26</span><p><b>Sugon 中科曙光</b><small>TRAINING ADMIN CONSOLE</small></p></div>
           <p className="eyebrow"><span /> 管理员专用</p>
@@ -145,7 +144,7 @@ export default function AdminPage() {
   return (
     <main className="admin-shell">
       <aside className="admin-sidebar">
-        <Link href="/" className="admin-logo"><span>26</span><p><b>Sugon 中科曙光</b><small>TRAINING ADMIN</small></p></Link>
+        <a href="/" className="admin-logo"><span>26</span><p><b>Sugon 中科曙光</b><small>TRAINING ADMIN</small></p></a>
         <nav><a className="active" href="#submissions">投稿管理</a><a href={`/api/admin/export${companyFilter ? `?company=${encodeURIComponent(companyFilter)}` : ''}`}>导出素材</a></nav>
         <button onClick={logout}>退出登录</button>
       </aside>

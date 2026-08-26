@@ -1,4 +1,10 @@
-import { env } from 'cloudflare:workers';
+export type AppEnv = {
+  DB: D1Database;
+  FILES: R2Bucket;
+  ADMIN_USERNAME?: string;
+  ADMIN_PASSWORD?: string;
+  SESSION_SECRET?: string;
+};
 
 export const MAX_FILE_SIZE = 10 * 1024 * 1024;
 export const ALLOWED_MEDIA_TYPES = new Set([
@@ -26,7 +32,7 @@ export type SubmissionRow = {
 
 let schemaReady = false;
 
-export async function ensureSchema() {
+export async function ensureSchema(env: AppEnv) {
   if (schemaReady) return;
   const db = env.DB;
   await db.batch([

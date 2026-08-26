@@ -1,0 +1,21 @@
+export type ApiRoute =
+  | { name: 'gallery' | 'submissions' | 'admin-login' | 'admin-logout' | 'admin-session' | 'admin-submissions' | 'admin-export' }
+  | { name: 'gallery-media' | 'submission' | 'submission-media' | 'admin-submission' | 'admin-submission-media'; value: string };
+
+export function matchRoute(pathname: string): ApiRoute | null {
+  const parts = pathname.replace(/^\/api\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
+  const path = parts.join('/');
+  if (path === 'gallery') return { name: 'gallery' };
+  if (path === 'submissions') return { name: 'submissions' };
+  if (path === 'admin/login') return { name: 'admin-login' };
+  if (path === 'admin/logout') return { name: 'admin-logout' };
+  if (path === 'admin/session') return { name: 'admin-session' };
+  if (path === 'admin/submissions') return { name: 'admin-submissions' };
+  if (path === 'admin/export') return { name: 'admin-export' };
+  if (parts[0] === 'gallery' && parts[2] === 'media' && parts.length === 3) return { name: 'gallery-media', value: parts[1] };
+  if (parts[0] === 'submissions' && parts[2] === 'image' && parts.length === 3) return { name: 'submission-media', value: parts[1] };
+  if (parts[0] === 'submissions' && parts.length === 2) return { name: 'submission', value: parts[1] };
+  if (parts[0] === 'admin' && parts[1] === 'submissions' && parts[3] === 'image' && parts.length === 4) return { name: 'admin-submission-media', value: parts[2] };
+  if (parts[0] === 'admin' && parts[1] === 'submissions' && parts.length === 3) return { name: 'admin-submission', value: parts[2] };
+  return null;
+}

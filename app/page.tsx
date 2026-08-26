@@ -141,8 +141,8 @@ export default function Home() {
 
   useEffect(() => {
     fetch('/api/gallery')
-      .then((response) => response.json())
-      .then((data: { items?: GalleryItem[] }) => setGalleryItems(data.items || []))
+      .then(async (response) => (await response.json()) as { items?: GalleryItem[] })
+      .then((data) => setGalleryItems(data.items || []))
       .catch(() => setGalleryItems([]));
   }, []);
 

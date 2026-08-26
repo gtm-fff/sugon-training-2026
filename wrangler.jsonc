@@ -1,15 +1,9 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "sugon-training-2026",
-  "main": "dist/server/index.js",
+  "pages_build_output_dir": "./dist",
   "compatibility_date": "2026-05-15",
   "compatibility_flags": ["nodejs_compat"],
-  "no_bundle": true,
-  "rules": [
-    { "type": "ESModule", "globs": ["**/*.js", "**/*.mjs"] }
-  ],
-  "assets": { "directory": "dist/client" },
-  "observability": { "enabled": true },
   "d1_databases": [
     {
       "binding": "DB",
