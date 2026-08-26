@@ -2,6 +2,8 @@
 
 一个本机可运行的前后端一体 Demo：访客免登录上传一份不超过 10MB 的照片或视频，上传后自动生成代码，并可凭代码回查、修改；管理员可统一查看、编辑、删除和按连队导出 ZIP。连队支持一连至十六连，并提供自动轮播的独立连队相册，真实上传会自动进入对应相册。
 
+在线演示：[sugon-training-2026.training-hub.workers.dev](https://sugon-training-2026.training-hub.workers.dev)
+
 ## 本机运行
 
 ```bash
