@@ -6,7 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "no_bundle": true,
   "rules": [
-    { "type": "ESModule", "globs": ["dist/server/**/*.js", "dist/server/**/*.mjs"] }
+    { "type": "ESModule", "globs": ["**/*.js", "**/*.mjs"] }
   ],
   "assets": { "directory": "dist/client" },
   "observability": { "enabled": true },
