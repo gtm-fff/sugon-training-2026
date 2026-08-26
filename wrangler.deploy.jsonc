@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "sugon-training-2026",
+  "main": "dist/server/index.js",
+  "compatibility_date": "2026-05-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "no_bundle": true,
+  "rules": [
+    { "type": "ESModule", "globs": ["dist/server/**/*.js", "dist/server/**/*.mjs"] }
+  ],
+  "assets": { "directory": "dist/client" },
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "sugon-training-2026-db",
+      "database_id": "26efbb96-49a9-41ce-84d4-2fafc6181c90",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "r2_buckets": [
+    { "binding": "FILES", "bucket_name": "sugon-training-2026-files" }
+  ]
+}
