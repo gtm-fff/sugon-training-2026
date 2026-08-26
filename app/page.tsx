@@ -87,6 +87,7 @@ function MediaPicker({ file, onChange, currentImage, currentType }: {
 
 export default function Home() {
   const [mode, setMode] = useState<'upload' | 'manage'>('upload');
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [company, setCompany] = useState('一连');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -209,6 +210,12 @@ export default function Home() {
     setCreatedCredential('');
   }
 
+  function openWorkspace(next: 'upload' | 'manage') {
+    switchMode(next);
+    setWorkspaceOpen(true);
+    window.setTimeout(() => document.getElementById('upload')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+  }
+
   const activeAlbum = COMPANY_ALBUMS[albumIndex];
   const liveMedia = galleryItems.filter((item) => item.company === activeAlbum.name);
   const albumMedia = [
@@ -235,7 +242,7 @@ export default function Home() {
       <section className="hero" id="top">
         <div className="hero-copy">
           <p className="eyebrow"><span /> SUGON GRADUATE TRAINING 2026</p>
-          <h1>把每一次并肩，<br />汇聚成一束<span>新的曙光</span>。</h1>
+          <h1>荣聚曙光，<br /><span>梦想起航</span>。</h1>
           <p className="hero-intro">记录新曙光人的成长时刻。无需注册，选择连队即可上传；完成后自动生成上传码，之后随时回来修改。</p>
           <div className="hero-facts">
             <span><strong>16</strong> 青春连队</span>
@@ -252,7 +259,21 @@ export default function Home() {
         </div>
       </section>
 
+      {!workspaceOpen ? (
+        <section className="upload-launch" id="upload">
+          <div className="upload-launch-copy">
+            <p>UPLOAD & MANAGE</p>
+            <h2>留下你的集训瞬间</h2>
+            <span>上传照片或视频，完成后自动获得专属上传码。</span>
+          </div>
+          <div className="upload-launch-actions">
+            <button className="launch-primary" onClick={() => openWorkspace('upload')}>上传素材 <span>→</span></button>
+            <button className="launch-secondary" onClick={() => openWorkspace('manage')}>凭码查询</button>
+          </div>
+        </section>
+      ) : (
       <section className="workspace" id="upload">
+        <button className="workspace-close" onClick={() => setWorkspaceOpen(false)} aria-label="收起上传界面">收起 ×</button>
         <div className="steps-rail">
           <p>HOW IT WORKS</p>
           <ol>
@@ -303,6 +324,7 @@ export default function Home() {
           )}
         </div>
       </section>
+      )}
 
       <section className="gallery-section" id="gallery" aria-labelledby="gallery-title">
         <div className="gallery-heading">
