@@ -7,10 +7,15 @@ export type AppEnv = {
 };
 
 export const MAX_FILE_SIZE = 25 * 1024 * 1024;
-export const ALLOWED_MEDIA_TYPES = new Set([
+export const VISUAL_MEDIA_TYPES = new Set([
   'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif', 'image/bmp',
   'video/mp4', 'video/quicktime', 'video/webm',
 ]);
+export const AUDIO_MEDIA_TYPES = new Set([
+  'audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/x-m4a', 'audio/aac',
+  'audio/wav', 'audio/x-wav', 'audio/wave',
+]);
+export const ALLOWED_MEDIA_TYPES = new Set([...VISUAL_MEDIA_TYPES, ...AUDIO_MEDIA_TYPES]);
 export const COMPANIES = new Set([
   '一连', '二连', '三连', '四连', '五连', '六连', '七连', '八连',
   '九连', '十连', '十一连', '十二连', '十三连', '十四连', '十五连', '十六连',
@@ -62,6 +67,17 @@ export async function ensureSchema(env: AppEnv) {
       UNIQUE (submission_id, position)
     )`),
     db.prepare('CREATE INDEX IF NOT EXISTS idx_submission_media_submission ON submission_media(submission_id)'),
+    db.prepare(`CREATE TABLE IF NOT EXISTS company_songs (
+      company TEXT PRIMARY KEY,
+      owner_submission_id TEXT NOT NULL UNIQUE,
+      audio_key TEXT NOT NULL,
+      audio_name TEXT NOT NULL,
+      audio_type TEXT NOT NULL,
+      audio_size INTEGER NOT NULL CHECK(audio_size <= 26214400),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_company_songs_owner ON company_songs(owner_submission_id)'),
     db.prepare(`CREATE TABLE IF NOT EXISTS company_votes (
       company TEXT NOT NULL,
       voter_hash TEXT NOT NULL,
@@ -129,6 +145,10 @@ export function extensionFor(type: string) {
   if (type === 'video/mp4') return 'mp4';
   if (type === 'video/quicktime') return 'mov';
   if (type === 'video/webm') return 'webm';
+  if (type === 'audio/mpeg' || type === 'audio/mp3') return 'mp3';
+  if (type === 'audio/mp4' || type === 'audio/x-m4a') return 'm4a';
+  if (type === 'audio/aac') return 'aac';
+  if (type === 'audio/wav' || type === 'audio/x-wav' || type === 'audio/wave') return 'wav';
   return 'jpg';
 }
 

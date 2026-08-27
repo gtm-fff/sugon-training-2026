@@ -191,7 +191,9 @@ export default function AdminPage() {
               {submissions.map((item) => (
                 <article className={`submission-card ${selected.includes(item.id) ? 'selected' : ''}`} key={item.id}>
                   <label className="select-box"><input type="checkbox" checked={selected.includes(item.id)} onChange={() => toggle(item.id)} /><span /></label>
-                  {item.mediaType.startsWith('video/') ? (
+                  {item.mediaType.startsWith('audio/') ? (
+                    <div className="admin-audio-cover"><b>♫</b><span>连队队歌</span></div>
+                  ) : item.mediaType.startsWith('video/') ? (
                     <video src={`/api/admin/submissions/${item.id}/image?v=${item.updatedAt}`} controls muted playsInline preload="none" />
                   ) : (
                     <img src={`/api/gallery/${item.id}/thumbnail?v=${item.updatedAt}`} alt={item.title || '集训投稿'} loading="lazy" decoding="async" width="720" height="480" />

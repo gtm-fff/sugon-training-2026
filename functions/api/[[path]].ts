@@ -7,7 +7,7 @@ import {
   validAdminLogin,
 } from '../../lib/admin';
 import {
-  ALLOWED_MEDIA_TYPES,
+  AUDIO_MEDIA_TYPES,
   type AppEnv,
   cleanText,
   ensureSchema,
@@ -20,6 +20,7 @@ import {
   randomCredential,
   sha256,
   type SubmissionRow,
+  VISUAL_MEDIA_TYPES,
   validCompany,
 } from '../../lib/data';
 import { matchRoute } from './router';
@@ -40,8 +41,20 @@ type SubmissionMediaRow = {
   created_at: string;
 };
 
+type CompanySongRow = {
+  company: string;
+  owner_submission_id: string;
+  audio_key: string;
+  audio_name: string;
+  audio_type: string;
+  audio_size: number;
+  created_at: string;
+  updated_at: string;
+};
+
 type UploadMedia = { image: File; display: File | null; thumbnail: File | null };
 type StoredMedia = UploadMedia & { id: string; imageKey: string; position: number };
+type StoredSong = { file: File; audioKey: string };
 
 function notAllowed(...methods: string[]) {
   return new Response('Method not allowed', { status: 405, headers: { Allow: methods.join(', ') } });
@@ -121,7 +134,7 @@ async function deleteMedia(env: AppEnv, imageKey: string) {
 
 function validateImageVariants(image: File, display: File | null, thumbnail: File | null) {
   if (!image.type.startsWith('image/')) {
-    return display || thumbnail ? json({ error: '视频不接受图片展示图或缩略图' }, 400) : null;
+    return display || thumbnail ? json({ error: '非图片素材不接受图片展示图或缩略图' }, 400) : null;
   }
   if (display && display.type !== 'image/webp') return json({ error: '展示图必须为 WebP' }, 415);
   if (display && display.size > MAX_DISPLAY_IMAGE_SIZE) return json({ error: '展示图超过 2MB' }, 413);
@@ -132,7 +145,7 @@ function validateImageVariants(image: File, display: File | null, thumbnail: Fil
 
 function parseMediaUploads(form: FormData) {
   const requestedCount = Number(form.get('media_count'));
-  const count = Number.isInteger(requestedCount) && requestedCount > 0 ? requestedCount : 1;
+  const count = Number.isInteger(requestedCount) && requestedCount > 0 ? requestedCount : form.get('image') instanceof File ? 1 : 0;
   const uploads: UploadMedia[] = [];
   for (let index = 0; index < count; index += 1) {
     const suffix = requestedCount ? `_${index}` : '';
@@ -146,14 +159,16 @@ function parseMediaUploads(form: FormData) {
       thumbnail: thumbnailValue instanceof File && thumbnailValue.size > 0 ? thumbnailValue : null,
     });
   }
-  return { count, uploads };
+  const songValue = form.get('song');
+  return { count, uploads, song: songValue instanceof File && songValue.size > 0 ? songValue : null };
 }
 
-function validateMediaUploads(count: number, uploads: UploadMedia[]) {
+function validateMediaUploads(count: number, uploads: UploadMedia[], song: File | null, required = true) {
   if (count > MAX_MEDIA_COUNT) return json({ error: `一次最多上传 ${MAX_MEDIA_COUNT} 张图片` }, 400);
-  if (!uploads.length || uploads.length !== count) return json({ error: '请选择照片或视频' }, 400);
-  if (uploads.reduce((sum, item) => sum + item.image.size, 0) > MAX_FILE_SIZE) return json({ error: '本次上传文件总大小超过 25MB' }, 413);
-  if (uploads.some((item) => !ALLOWED_MEDIA_TYPES.has(item.image.type))) return json({ error: '只支持 JPEG、PNG、WebP、GIF、AVIF、BMP、MP4、MOV 或 WebM' }, 415);
+  if (uploads.length !== count || (!uploads.length && !song && required)) return json({ error: '请选择照片、视频或音频' }, 400);
+  if (uploads.reduce((sum, item) => sum + item.image.size, song?.size || 0) > MAX_FILE_SIZE) return json({ error: '本次上传文件总大小超过 25MB' }, 413);
+  if (uploads.some((item) => !VISUAL_MEDIA_TYPES.has(item.image.type))) return json({ error: '只支持常见图片、MP4、MOV 或 WebM' }, 415);
+  if (song && !AUDIO_MEDIA_TYPES.has(song.type)) return json({ error: '队歌只支持 MP3、M4A、AAC 或 WAV' }, 415);
   if (uploads.some((item) => item.image.type.startsWith('video/')) && uploads.length > 1) return json({ error: '视频需要单独上传，不能与其他素材混传' }, 400);
   for (const item of uploads) {
     const error = validateImageVariants(item.image, item.display, item.thumbnail);
@@ -162,10 +177,10 @@ function validateMediaUploads(count: number, uploads: UploadMedia[]) {
   return null;
 }
 
-async function storeMediaSet(env: AppEnv, submissionId: string, uploads: UploadMedia[]) {
-  const stored: StoredMedia[] = uploads.map((item, position) => {
-    const id = position === 0 ? submissionId : crypto.randomUUID();
-    return { ...item, id, position, imageKey: `submissions/${submissionId}/${crypto.randomUUID()}.${extensionFor(item.image.type)}` };
+async function storeMediaSet(env: AppEnv, submissionId: string, uploads: UploadMedia[], startPosition = 0, useSubmissionId = true) {
+  const stored: StoredMedia[] = uploads.map((item, offset) => {
+    const id = useSubmissionId && offset === 0 ? submissionId : crypto.randomUUID();
+    return { ...item, id, position: startPosition + offset, imageKey: `submissions/${submissionId}/${crypto.randomUUID()}.${extensionFor(item.image.type)}` };
   });
   try {
     await Promise.all(stored.flatMap((item) => [
@@ -183,6 +198,15 @@ async function storeMediaSet(env: AppEnv, submissionId: string, uploads: UploadM
   }
 }
 
+async function storeSong(env: AppEnv, submissionId: string, file: File): Promise<StoredSong> {
+  const audioKey = `songs/${submissionId}/${crypto.randomUUID()}.${extensionFor(file.type)}`;
+  await env.FILES.put(audioKey, file.stream(), {
+    httpMetadata: { contentType: file.type },
+    customMetadata: { originalName: file.name.slice(0, 180) },
+  });
+  return { file, audioKey };
+}
+
 async function extraMedia(env: AppEnv, submissionId: string) {
   return (await env.DB.prepare('SELECT * FROM submission_media WHERE submission_id = ? ORDER BY position').bind(submissionId).all<SubmissionMediaRow>()).results;
 }
@@ -196,11 +220,18 @@ function publicMedia(row: Pick<SubmissionMediaRow, 'id' | 'image_name' | 'image_
   return { id: row.id, imageName: row.image_name, mediaType: row.image_type, imageSize: row.image_size, position: row.position };
 }
 
+function publicSong(row: CompanySongRow | null) {
+  return row ? { company: row.company, name: row.audio_name, mediaType: row.audio_type, size: row.audio_size, updatedAt: row.updated_at } : null;
+}
+
 async function publicSubmissionWithMedia(env: AppEnv, row: SubmissionRow) {
   const extras = await extraMedia(env, row.id);
+  const song = await env.DB.prepare('SELECT * FROM company_songs WHERE owner_submission_id = ?').bind(row.id).first<CompanySongRow>();
+  const media = [publicMedia({ id: row.id, image_name: row.image_name, image_type: row.image_type, image_size: row.image_size, position: 0 }), ...extras.map(publicMedia)];
   return {
     ...publicSubmission(row),
-    media: [publicMedia({ id: row.id, image_name: row.image_name, image_type: row.image_type, image_size: row.image_size, position: 0 }), ...extras.map(publicMedia)],
+    media: media.filter((item) => !item.mediaType.startsWith('audio/')),
+    song: publicSong(song),
   };
 }
 
@@ -210,20 +241,26 @@ async function createSubmission(env: AppEnv, request: Request) {
   const company = cleanText(form.get('company'), 20);
   const title = cleanText(form.get('title'), 60);
   const description = cleanText(form.get('description'), 300);
-  const { count, uploads } = parseMediaUploads(form);
+  const { count, uploads, song } = parseMediaUploads(form);
 
   if (!validCompany(company)) return json({ error: '请选择正确的连队' }, 400);
-  const mediaError = validateMediaUploads(count, uploads);
+  const mediaError = validateMediaUploads(count, uploads, song);
   if (mediaError) return mediaError;
+  if (song && await env.DB.prepare('SELECT company FROM company_songs WHERE company = ?').bind(company).first()) {
+    return json({ error: `${company}已有队歌，请由原上传码或管理员更换` }, 409);
+  }
 
   const id = crypto.randomUUID();
   const credential = randomCredential();
   const credentialHash = await sha256(credential);
   const now = new Date().toISOString();
-  const stored = await storeMediaSet(env, id, uploads);
-  const first = stored[0];
+  let stored: StoredMedia[] = [];
+  let storedSong: StoredSong | null = null;
 
   try {
+    if (song) storedSong = await storeSong(env, id, song);
+    if (uploads.length) stored = await storeMediaSet(env, id, uploads);
+    const first = stored[0] || { imageKey: storedSong!.audioKey, image: storedSong!.file };
     await env.DB.batch([
       env.DB.prepare(`INSERT INTO submissions (
       id, credential_hash, company, title, description,
@@ -237,9 +274,17 @@ async function createSubmission(env: AppEnv, request: Request) {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(
         item.id, id, item.imageKey, item.image.name.slice(0, 180), item.image.type, item.image.size, item.position, now,
       )),
+      ...(storedSong ? [env.DB.prepare(`INSERT INTO company_songs (
+        company, owner_submission_id, audio_key, audio_name, audio_type, audio_size, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+        company, id, storedSong.audioKey, storedSong.file.name.slice(0, 180), storedSong.file.type, storedSong.file.size, now, now,
+      )] : []),
     ]);
   } catch (error) {
-    await Promise.all(stored.map((item) => deleteMedia(env, item.imageKey)));
+    await Promise.all([
+      ...stored.map((item) => deleteMedia(env, item.imageKey)),
+      ...(storedSong ? [deleteMedia(env, storedSong.audioKey)] : []),
+    ]);
     throw error;
   }
 
@@ -256,41 +301,82 @@ async function updateSubmission(env: AppEnv, request: Request, credential: strin
   const title = cleanText(form.get('title'), 60);
   const description = cleanText(form.get('description'), 300);
   const parsed = parseMediaUploads(form);
-  const replacingMedia = form.has('media_count') || parsed.uploads.length > 0;
+  const append = form.get('append') === '1';
+  const hasVisualUpload = parsed.count > 0;
+  const replacingMedia = hasVisualUpload && !append;
+  const appendingMedia = hasVisualUpload && append;
   if (!validCompany(company)) return json({ error: '请选择正确的连队' }, 400);
-  if (replacingMedia) {
-    const mediaError = validateMediaUploads(parsed.count, parsed.uploads);
-    if (mediaError) return mediaError;
+  const mediaError = validateMediaUploads(parsed.count, parsed.uploads, parsed.song, false);
+  if (mediaError) return mediaError;
+
+  const ownerSong = await env.DB.prepare('SELECT * FROM company_songs WHERE owner_submission_id = ?').bind(row.id).first<CompanySongRow>();
+  if (parsed.song || (ownerSong && ownerSong.company !== company)) {
+    const companySong = await env.DB.prepare('SELECT * FROM company_songs WHERE company = ?').bind(company).first<CompanySongRow>();
+    if (companySong && companySong.owner_submission_id !== row.id) {
+      return json({ error: `${company}已有队歌，请由原上传码或管理员更换` }, 409);
+    }
   }
 
   const oldExtras = replacingMedia ? await extraMedia(env, row.id) : [];
-  const stored = replacingMedia ? await storeMediaSet(env, row.id, parsed.uploads) : [];
-  const first = stored[0];
+  const lastPosition = appendingMedia
+    ? await env.DB.prepare('SELECT COALESCE(MAX(position), 0) AS position FROM submission_media WHERE submission_id = ?').bind(row.id).first<{ position: number }>()
+    : null;
+  let stored: StoredMedia[] = [];
+  let storedSong: StoredSong | null = null;
   const updatedAt = new Date().toISOString();
   try {
+    if (parsed.song) storedSong = await storeSong(env, row.id, parsed.song);
+    if (replacingMedia) stored = await storeMediaSet(env, row.id, parsed.uploads);
+    if (appendingMedia) stored = await storeMediaSet(env, row.id, parsed.uploads, (lastPosition?.position || 0) + 1, false);
+    const first = replacingMedia ? stored[0] : null;
+    const baseSong = storedSong && row.image_type.startsWith('audio/') && ownerSong?.audio_key === row.image_key && !first ? storedSong : null;
     await env.DB.batch([
       env.DB.prepare(`UPDATE submissions SET company = ?, title = ?, description = ?,
       image_key = ?, image_name = ?, image_type = ?, image_size = ?, updated_at = ? WHERE id = ?`)
         .bind(
           company, title, description,
-          first?.imageKey || row.image_key,
-          first?.image.name.slice(0, 180) || row.image_name,
-          first?.image.type || row.image_type,
-          first?.image.size || row.image_size,
+          first?.imageKey || baseSong?.audioKey || row.image_key,
+          first?.image.name.slice(0, 180) || baseSong?.file.name.slice(0, 180) || row.image_name,
+          first?.image.type || baseSong?.file.type || row.image_type,
+          first?.image.size || baseSong?.file.size || row.image_size,
           updatedAt, row.id,
         ),
       ...(replacingMedia ? [env.DB.prepare('DELETE FROM submission_media WHERE submission_id = ?').bind(row.id)] : []),
-      ...stored.slice(1).map((item) => env.DB.prepare(`INSERT INTO submission_media (
+      ...(replacingMedia ? stored.slice(1) : stored).map((item) => env.DB.prepare(`INSERT INTO submission_media (
         id, submission_id, image_key, image_name, image_type, image_size, position, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(
         item.id, row.id, item.imageKey, item.image.name.slice(0, 180), item.image.type, item.image.size, item.position, updatedAt,
       )),
+      ...(storedSong && ownerSong?.company !== company
+        ? [env.DB.prepare('DELETE FROM company_songs WHERE owner_submission_id = ?').bind(row.id)]
+        : []),
+      ...(storedSong ? [env.DB.prepare(`INSERT INTO company_songs (
+        company, owner_submission_id, audio_key, audio_name, audio_type, audio_size, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(company) DO UPDATE SET audio_key = excluded.audio_key, audio_name = excluded.audio_name,
+        audio_type = excluded.audio_type, audio_size = excluded.audio_size, updated_at = excluded.updated_at
+      WHERE owner_submission_id = excluded.owner_submission_id`).bind(
+        company, row.id, storedSong.audioKey, storedSong.file.name.slice(0, 180), storedSong.file.type, storedSong.file.size,
+        ownerSong?.created_at || updatedAt, updatedAt,
+      )] : []),
+      ...(!storedSong && ownerSong?.company !== company
+        ? [env.DB.prepare('UPDATE company_songs SET company = ?, updated_at = ? WHERE owner_submission_id = ?').bind(company, updatedAt, row.id)]
+        : []),
     ]);
   } catch (error) {
-    await Promise.all(stored.map((item) => deleteMedia(env, item.imageKey)));
+    await Promise.all([
+      ...stored.map((item) => deleteMedia(env, item.imageKey)),
+      ...(storedSong ? [deleteMedia(env, storedSong.audioKey)] : []),
+    ]);
     throw error;
   }
-  if (replacingMedia) await Promise.all([deleteMedia(env, row.image_key), ...oldExtras.map((item) => deleteMedia(env, item.image_key))]);
+  const obsoleteKeys = new Set<string>();
+  if (replacingMedia) {
+    if (row.image_key !== ownerSong?.audio_key) obsoleteKeys.add(row.image_key);
+    oldExtras.forEach((item) => obsoleteKeys.add(item.image_key));
+  }
+  if (storedSong && ownerSong?.audio_key && ownerSong.audio_key !== storedSong.audioKey) obsoleteKeys.add(ownerSong.audio_key);
+  await Promise.all([...obsoleteKeys].map((key) => deleteMedia(env, key)));
 
   const updated = await env.DB.prepare('SELECT * FROM submissions WHERE id = ?').bind(row.id).first<SubmissionRow>();
   return json(await publicSubmissionWithMedia(env, updated!));
@@ -348,7 +434,8 @@ async function listAdminSubmissions(env: AppEnv, request: Request) {
     ? await env.DB.prepare('SELECT COUNT(*) AS total FROM submissions WHERE company = ?').bind(company).first<{ total: number }>()
     : await env.DB.prepare('SELECT COUNT(*) AS total FROM submissions').first<{ total: number }>();
   const stats = await env.DB.prepare(`SELECT COUNT(*) AS total,
-    COALESCE(SUM(image_size), 0) + (SELECT COALESCE(SUM(image_size), 0) FROM submission_media) AS usedSpace,
+    COALESCE(SUM(image_size), 0) + (SELECT COALESCE(SUM(image_size), 0) FROM submission_media) +
+    (SELECT COALESCE(SUM(audio_size), 0) FROM company_songs WHERE audio_key NOT IN (SELECT image_key FROM submissions)) AS usedSpace,
     COUNT(DISTINCT company) AS companyCount FROM submissions`).first<{ total: number; usedSpace: number; companyCount: number }>();
   return json({
     submissions: publicRows(pageRows).map((item) => ({ ...item, mediaCount: countBySubmission[item.id] || 1 })),
@@ -369,15 +456,15 @@ async function deleteAdminSubmissions(env: AppEnv, request: Request) {
   const placeholders = ids.map(() => '?').join(',');
   const rows = await env.DB.prepare(`SELECT * FROM submissions WHERE id IN (${placeholders})`).bind(...ids).all<SubmissionRow>();
   const extras = await env.DB.prepare(`SELECT * FROM submission_media WHERE submission_id IN (${placeholders})`).bind(...ids).all<SubmissionMediaRow>();
+  const songs = await env.DB.prepare(`SELECT * FROM company_songs WHERE owner_submission_id IN (${placeholders})`).bind(...ids).all<CompanySongRow>();
   const statements = [
+    env.DB.prepare(`DELETE FROM company_songs WHERE owner_submission_id IN (${placeholders})`).bind(...ids),
     env.DB.prepare(`DELETE FROM submission_media WHERE submission_id IN (${placeholders})`).bind(...ids),
     ...rows.results.map((row) => env.DB.prepare('DELETE FROM submissions WHERE id = ?').bind(row.id)),
   ];
   if (statements.length) await env.DB.batch(statements);
-  await Promise.all([
-    ...rows.results.map((row) => deleteMedia(env, row.image_key)),
-    ...extras.results.map((item) => deleteMedia(env, item.image_key)),
-  ]);
+  const keys = new Set([...rows.results.map((row) => row.image_key), ...extras.results.map((item) => item.image_key), ...songs.results.map((song) => song.audio_key)]);
+  await Promise.all([...keys].map((key) => deleteMedia(env, key)));
   return json({ deleted: rows.results.length });
 }
 
@@ -403,11 +490,14 @@ async function deleteAdminSubmission(env: AppEnv, request: Request, id: string) 
   const row = await env.DB.prepare('SELECT * FROM submissions WHERE id = ?').bind(id).first<SubmissionRow>();
   if (!row) return json({ error: '投稿不存在' }, 404);
   const extras = await extraMedia(env, id);
+  const song = await env.DB.prepare('SELECT * FROM company_songs WHERE owner_submission_id = ?').bind(id).first<CompanySongRow>();
   await env.DB.batch([
+    env.DB.prepare('DELETE FROM company_songs WHERE owner_submission_id = ?').bind(id),
     env.DB.prepare('DELETE FROM submission_media WHERE submission_id = ?').bind(id),
     env.DB.prepare('DELETE FROM submissions WHERE id = ?').bind(id),
   ]);
-  await Promise.all([deleteMedia(env, row.image_key), ...extras.map((item) => deleteMedia(env, item.image_key))]);
+  const keys = new Set([row.image_key, ...extras.map((item) => item.image_key), ...(song ? [song.audio_key] : [])]);
+  await Promise.all([...keys].map((key) => deleteMedia(env, key)));
   return json({ ok: true });
 }
 
@@ -425,6 +515,9 @@ async function exportAdminSubmissions(env: AppEnv, request: Request) {
     ? (await env.DB.prepare(`SELECT * FROM submission_media WHERE submission_id IN (${rowIds.map(() => '?').join(',')}) ORDER BY submission_id, position`).bind(...rowIds).all<SubmissionMediaRow>()).results
     : [];
   const extrasBySubmission = Map.groupBy(extras, (item) => item.submission_id);
+  const songs = (await (company
+    ? env.DB.prepare('SELECT * FROM company_songs WHERE company = ? ORDER BY company').bind(company)
+    : env.DB.prepare('SELECT * FROM company_songs ORDER BY company')).all<CompanySongRow>()).results;
 
   const header = ['投稿ID', '连队', '标题', '说明', '素材文件名', '文件大小', '上传时间', '修改时间'];
   const csv = [header, ...rows.map((row) => [
@@ -433,6 +526,7 @@ async function exportAdminSubmissions(env: AppEnv, request: Request) {
   ])].map((line) => line.map(csvCell).join(',')).join('\r\n');
 
   const files: Record<string, Uint8Array> = { '投稿清单.csv': strToU8(`\uFEFF${csv}`) };
+  const exportedKeys = new Set<string>();
   for (const row of rows) {
     const media = [
       { image_key: row.image_key, image_name: row.image_name, position: 0 },
@@ -440,8 +534,16 @@ async function exportAdminSubmissions(env: AppEnv, request: Request) {
     ];
     for (const item of media) {
       const object = await env.FILES.get(item.image_key);
-      if (object) files[`${safeName(row.company)}/${row.id}/${String(item.position + 1).padStart(2, '0')}_${safeName(item.image_name)}`] = new Uint8Array(await object.arrayBuffer());
+      if (object) {
+        exportedKeys.add(item.image_key);
+        files[`${safeName(row.company)}/${row.id}/${String(item.position + 1).padStart(2, '0')}_${safeName(item.image_name)}`] = new Uint8Array(await object.arrayBuffer());
+      }
     }
+  }
+  for (const song of songs) {
+    if (exportedKeys.has(song.audio_key)) continue;
+    const object = await env.FILES.get(song.audio_key);
+    if (object) files[`${safeName(song.company)}/队歌_${safeName(song.audio_name)}`] = new Uint8Array(await object.arrayBuffer());
   }
   const archive = zipSync(files, { level: 0 });
   const name = `${company || '全部连队'}_集训素材.zip`;
@@ -465,15 +567,17 @@ export const onRequest: PagesFunction<AppEnv> = async ({ request, env }) => {
         await ensureSchema(env);
         const result = await env.DB.prepare('SELECT * FROM submissions ORDER BY created_at DESC').all<SubmissionRow>();
         const extraResult = await env.DB.prepare('SELECT * FROM submission_media ORDER BY submission_id, position').all<SubmissionMediaRow>();
+        const songResult = await env.DB.prepare('SELECT * FROM company_songs ORDER BY company').all<CompanySongRow>();
         const extrasBySubmission = Map.groupBy(extraResult.results, (item) => item.submission_id);
         const popularity = await galleryPopularity(env, request);
         return json({
           items: result.results.flatMap((row) => [
-            { id: row.id, company: row.company, title: row.title, description: row.description, mediaType: row.image_type, createdAt: row.created_at, updatedAt: row.updated_at },
+            { id: row.id, submissionId: row.id, company: row.company, title: row.title, description: row.description, mediaType: row.image_type, createdAt: row.created_at, updatedAt: row.updated_at },
             ...(extrasBySubmission.get(row.id) || []).map((item) => ({
-              id: item.id, company: row.company, title: row.title, description: row.description, mediaType: item.image_type, createdAt: row.created_at, updatedAt: row.updated_at,
+              id: item.id, submissionId: row.id, company: row.company, title: row.title, description: row.description, mediaType: item.image_type, createdAt: row.created_at, updatedAt: row.updated_at,
             })),
-          ]),
+          ]).filter((item) => !item.mediaType.startsWith('audio/')),
+          songs: Object.fromEntries(songResult.results.map((song) => [song.company, publicSong(song)])),
           submissionCount: result.results.length,
           ...popularity,
         });
@@ -492,6 +596,12 @@ export const onRequest: PagesFunction<AppEnv> = async ({ request, env }) => {
         const row = await galleryMedia(env, route.value);
         return thumbnailResponse(env, row);
       }
+      case 'gallery-song': {
+        if (request.method !== 'GET' || !validCompany(route.value)) return notAllowed('GET');
+        await ensureSchema(env);
+        const song = await env.DB.prepare('SELECT audio_key AS image_key, audio_type AS image_type FROM company_songs WHERE company = ?').bind(route.value).first<MediaObject>();
+        return mediaResponse(env, song, 'public, max-age=3600');
+      }
       case 'submissions':
         return request.method === 'POST' ? createSubmission(env, request) : notAllowed('POST');
       case 'submission': {
@@ -505,8 +615,11 @@ export const onRequest: PagesFunction<AppEnv> = async ({ request, env }) => {
         if (request.method !== 'GET') return notAllowed('GET');
         const submission = await findSubmission(env, route.value);
         if (!submission) return new Response('Not found', { status: 404 });
-        const mediaId = new URL(request.url).searchParams.get('media');
-        const media = mediaId && mediaId !== submission.id
+        const search = new URL(request.url).searchParams;
+        const mediaId = search.get('media');
+        const media = search.get('song') === '1'
+          ? await env.DB.prepare('SELECT audio_key AS image_key, audio_type AS image_type FROM company_songs WHERE owner_submission_id = ?').bind(submission.id).first<MediaObject>()
+          : mediaId && mediaId !== submission.id
           ? await env.DB.prepare('SELECT image_key, image_type FROM submission_media WHERE id = ? AND submission_id = ?').bind(mediaId, submission.id).first<MediaObject>()
           : submission;
         return displayResponse(env, media, 'private, max-age=60');
