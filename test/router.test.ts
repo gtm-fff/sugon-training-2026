@@ -11,4 +11,6 @@ test('Pages API routes keep dynamic credentials and ids', () => {
   assert.deepEqual(matchRoute('/api/admin/submissions/record-id/image'), { name: 'admin-submission-media', value: 'record-id' });
   assert.equal(matchRoute('/api/unknown'), null);
   assert.equal(extensionFor('image/gif'), 'gif');
+  assert.equal(extensionFor('image/avif'), 'avif');
+  assert.equal(extensionFor('image/bmp'), 'bmp');
 });

@@ -197,7 +197,7 @@ function MediaPicker({ file, onChange, currentImage, currentType }: {
           <strong>{file ? file.name : currentImage ? '点击替换素材' : '选择照片或视频'}</strong>
           <small>{file ? `${formatBytes(file.size)} · 点击重新选择` : '图片自动优化；GIF 保留动画；视频最大 25MB'}</small>
         </span>
-        <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm" onChange={pick} />
+        <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif,image/bmp,video/mp4,video/quicktime,video/webm" onChange={pick} />
       </label>
       {file && <button type="button" className="remove-media" onClick={() => { onChange(null); if (inputRef.current) inputRef.current.value = ''; }}>移除已选素材</button>}
     </div>
@@ -255,7 +255,7 @@ export default function Home() {
   function validateMedia(file: File | null, required = true) {
     if (!file && required) return '请选择照片或视频';
     if (file && file.size > MAX_FILE_SIZE) return '文件超过 25MB，请压缩后再试';
-    if (file && !['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/quicktime', 'video/webm'].includes(file.type)) return '只支持 JPEG、PNG、WebP、GIF、MP4、MOV 或 WebM';
+    if (file && !['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif', 'image/bmp', 'video/mp4', 'video/quicktime', 'video/webm'].includes(file.type)) return '只支持 JPEG、PNG、WebP、GIF、AVIF、BMP、MP4、MOV 或 WebM';
     return '';
   }
 

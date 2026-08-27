@@ -128,7 +128,7 @@ async function createSubmission(env: AppEnv, request: Request) {
   if (!validCompany(company)) return json({ error: '请选择正确的连队' }, 400);
   if (!(image instanceof File) || image.size === 0) return json({ error: '请选择照片或视频' }, 400);
   if (image.size > MAX_FILE_SIZE) return json({ error: '文件超过 25MB' }, 413);
-  if (!ALLOWED_MEDIA_TYPES.has(image.type)) return json({ error: '只支持 JPEG、PNG、WebP、GIF、MP4、MOV 或 WebM' }, 415);
+  if (!ALLOWED_MEDIA_TYPES.has(image.type)) return json({ error: '只支持 JPEG、PNG、WebP、GIF、AVIF、BMP、MP4、MOV 或 WebM' }, 415);
   const variantsError = validateImageVariants(image, display, thumbnail);
   if (variantsError) return variantsError;
 
@@ -193,7 +193,7 @@ async function updateSubmission(env: AppEnv, request: Request, credential: strin
 
   if (image instanceof File && image.size > 0) {
     if (image.size > MAX_FILE_SIZE) return json({ error: '文件超过 25MB' }, 413);
-    if (!ALLOWED_MEDIA_TYPES.has(image.type)) return json({ error: '只支持 JPEG、PNG、WebP、GIF、MP4、MOV 或 WebM' }, 415);
+    if (!ALLOWED_MEDIA_TYPES.has(image.type)) return json({ error: '只支持 JPEG、PNG、WebP、GIF、AVIF、BMP、MP4、MOV 或 WebM' }, 415);
     const variantsError = validateImageVariants(image, display, thumbnail);
     if (variantsError) return variantsError;
     newImageKey = `submissions/${row.id}/${crypto.randomUUID()}.${extensionFor(image.type)}`;
