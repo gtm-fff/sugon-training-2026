@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 
 const COMPANIES = [
   '一连', '二连', '三连', '四连', '五连', '六连', '七连', '八连',
@@ -33,30 +33,46 @@ export default function AdminPage() {
   const [editing, setEditing] = useState<Submission | null>(null);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [filteredTotal, setFilteredTotal] = useState(0);
+  const [stats, setStats] = useState({ total: 0, usedSpace: 0, companyCount: 0 });
 
-  const visible = useMemo(
-    () => companyFilter ? submissions.filter((item) => item.company === companyFilter) : submissions,
-    [submissions, companyFilter],
-  );
-  const usedSpace = submissions.reduce((sum, item) => sum + item.imageSize, 0);
-  const companyCount = new Set(submissions.map((item) => item.company)).size;
-
-  async function loadData() {
-    const submissionResponse = await fetch('/api/admin/submissions');
-    if (submissionResponse.status === 401) {
-      setAuthenticated(false);
-      return;
+  async function loadData(reset = true) {
+    setLoading(true);
+    try {
+      const search = new URLSearchParams({ limit: '48', offset: String(reset ? 0 : submissions.length) });
+      if (companyFilter) search.set('company', companyFilter);
+      const submissionResponse = await fetch(`/api/admin/submissions?${search}`);
+      if (submissionResponse.status === 401) {
+        setAuthenticated(false);
+        return;
+      }
+      const data = await submissionResponse.json() as {
+        submissions: Submission[];
+        hasMore: boolean;
+        filteredTotal: number;
+        stats: { total: number; usedSpace: number; companyCount: number };
+      };
+      setSubmissions((current) => reset ? data.submissions : [...current, ...data.submissions]);
+      setHasMore(data.hasMore);
+      setFilteredTotal(data.filteredTotal);
+      setStats(data.stats);
+      if (reset) setSelected([]);
+    } catch {
+      setMessage('投稿列表加载失败，请稍后重试');
+    } finally {
+      setLoading(false);
     }
-    const submissionData = await submissionResponse.json() as { submissions: Submission[] };
-    setSubmissions(submissionData.submissions);
   }
 
   useEffect(() => {
-    fetch('/api/admin/session').then(async (response) => {
-      setAuthenticated(response.ok);
-      if (response.ok) await loadData();
-    });
+    fetch('/api/admin/session').then((response) => setAuthenticated(response.ok));
   }, []);
+
+  useEffect(() => {
+    if (authenticated) void loadData(true);
+  }, [authenticated, companyFilter]);
 
   async function login(event: FormEvent) {
     event.preventDefault();
@@ -75,7 +91,6 @@ export default function AdminPage() {
     }
     setAuthenticated(true);
     setPassword('');
-    await loadData();
     setBusy(false);
   }
 
@@ -95,7 +110,7 @@ export default function AdminPage() {
     const data = await response.json() as { error?: string; deleted?: number };
     setMessage(response.ok ? `已删除 ${data.deleted} 份投稿` : data.error || '删除失败');
     setSelected([]);
-    await loadData();
+    await loadData(true);
     setBusy(false);
   }
 
@@ -111,7 +126,7 @@ export default function AdminPage() {
     const data = await response.json() as { error?: string };
     setMessage(response.ok ? '投稿信息已保存' : data.error || '保存失败');
     if (response.ok) setEditing(null);
-    await loadData();
+    await loadData(true);
     setBusy(false);
   }
 
@@ -153,15 +168,15 @@ export default function AdminPage() {
         <header className="admin-header"><div><p>SUGON GRADUATE TRAINING / 2026</p><h1>集训素材管理</h1></div><a href="/" target="_blank">打开上传页 ↗</a></header>
 
         <section className="stat-grid">
-          <article><span>总投稿</span><strong>{submissions.length}</strong><small>份素材</small></article>
-          <article><span>已用空间</span><strong>{(usedSpace / 1024 / 1024).toFixed(2)}</strong><small>MB</small></article>
-          <article><span>连队覆盖</span><strong>{companyCount}<i>/16</i></strong><small>已有投稿</small></article>
+          <article><span>总投稿</span><strong>{stats.total}</strong><small>份素材</small></article>
+          <article><span>已用空间</span><strong>{(stats.usedSpace / 1024 / 1024).toFixed(2)}</strong><small>MB</small></article>
+          <article><span>连队覆盖</span><strong>{stats.companyCount}<i>/16</i></strong><small>已有投稿</small></article>
         </section>
 
         {message && <p className="admin-message">{message}<button onClick={() => setMessage('')}>×</button></p>}
 
         <section className="admin-section" id="submissions">
-          <div className="section-title"><div><span>01</span><h2>投稿管理</h2></div><p>{visible.length} 份素材</p></div>
+          <div className="section-title"><div><span>01</span><h2>投稿管理</h2></div><p>{filteredTotal} 份素材</p></div>
           <div className="admin-toolbar">
             <select value={companyFilter} onChange={(event) => setCompanyFilter(event.target.value)}><option value="">全部连队</option>{COMPANIES.map((item) => <option key={item}>{item}</option>)}</select>
             <div className="toolbar-actions">
@@ -170,16 +185,15 @@ export default function AdminPage() {
             </div>
           </div>
 
-          {visible.length ? (
+          {submissions.length ? (
             <div className="submission-grid">
-              {visible.map((item) => (
+              {submissions.map((item) => (
                 <article className={`submission-card ${selected.includes(item.id) ? 'selected' : ''}`} key={item.id}>
                   <label className="select-box"><input type="checkbox" checked={selected.includes(item.id)} onChange={() => toggle(item.id)} /><span /></label>
                   {item.mediaType.startsWith('video/') ? (
-                    <video src={`/api/admin/submissions/${item.id}/image?v=${item.updatedAt}`} controls muted playsInline />
+                    <video src={`/api/admin/submissions/${item.id}/image?v=${item.updatedAt}`} controls muted playsInline preload="none" />
                   ) : (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={`/api/admin/submissions/${item.id}/image?v=${item.updatedAt}`} alt={item.title || '集训投稿'} />
+                    <img src={`/api/gallery/${item.id}/thumbnail?v=${item.updatedAt}`} alt={item.title || '集训投稿'} loading="lazy" decoding="async" width="720" height="480" />
                   )}
                   <div className="submission-copy">
                     <span className="company-chip">{item.company}</span>
@@ -192,6 +206,7 @@ export default function AdminPage() {
               ))}
             </div>
           ) : <div className="empty-state"><strong>还没有投稿</strong><p>从上传页面提交第一份素材后，这里会自动出现。</p></div>}
+          {hasMore && <button className="load-more" disabled={loading} onClick={() => loadData(false)}>{loading ? '正在加载…' : `加载更多（已显示 ${submissions.length} / ${filteredTotal}）`}</button>}
         </section>
       </div>
 

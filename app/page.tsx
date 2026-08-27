@@ -9,7 +9,7 @@ const COMPANIES = [
 const COMPANY_ALBUMS = COMPANIES.map((name, index) => ({
   name,
   number: String(index + 1).padStart(2, '0'),
-  demoUrl: `/company-demo/${String(index + 1).padStart(2, '0')}.jpg`,
+  demoUrl: `/company-demo/${String(index + 1).padStart(2, '0')}.webp`,
 }));
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
@@ -38,59 +38,66 @@ type GalleryItem = {
 type CompanyAlbum = (typeof COMPANY_ALBUMS)[number];
 
 function CompanyAlbumCard({ album, items }: { album: CompanyAlbum; items: GalleryItem[] }) {
-  const media = [
-    { id: `demo-${album.number}`, title: '', description: '', mediaType: 'image/jpeg', url: album.demoUrl, isDemo: true },
-    ...items.map((item) => ({ ...item, url: `/api/gallery/${item.id}/media?v=${item.updatedAt}`, isDemo: false })),
-  ];
+  const media = items.length ? items.map((item) => ({
+    ...item,
+    thumbnailUrl: item.mediaType.startsWith('video/') ? '' : `/api/gallery/${item.id}/thumbnail?v=${item.updatedAt}`,
+    url: `/api/gallery/${item.id}/media?v=${item.updatedAt}`,
+    isDemo: false,
+  })) : [{
+    id: `demo-${album.number}`,
+    title: '示例封面',
+    description: '暂无用户投稿，上传后将优先展示最新素材。',
+    mediaType: 'image/webp',
+    thumbnailUrl: album.demoUrl,
+    url: album.demoUrl,
+    isDemo: true,
+  }];
   const [index, setIndex] = useState(0);
-  const [paused, setPaused] = useState(false);
   const previewRef = useRef<HTMLDialogElement>(null);
-  const active = media[index % media.length];
+  const cover = media[0];
+  const active = media[index];
   const imageAlt = `${album.name}${active.isDemo ? '演示封面' : active.title || '投稿素材'}`;
-
-  useEffect(() => {
-    if (paused || media.length < 2) return;
-    const timer = window.setInterval(() => setIndex((current) => (current + 1) % media.length), 5000);
-    return () => window.clearInterval(timer);
-  }, [paused, media.length]);
 
   function move(delta: number) {
     setIndex((current) => (current + delta + media.length) % media.length);
   }
 
+  function openPreview() {
+    setIndex(0);
+    previewRef.current?.showModal();
+  }
+
   return (
-    <article className="company-album-card" onMouseEnter={() => setPaused(true)} onMouseLeave={() => { if (!previewRef.current?.open) setPaused(false); }}>
+    <article className="company-album-card">
       <div className="company-album-media">
-        {active.mediaType.startsWith('video/') ? (
-          <video src={active.url} controls muted playsInline preload="metadata" onPlay={() => setPaused(true)} onPause={() => setPaused(false)} />
-        ) : (
-          <button type="button" className="company-album-image-button" onClick={() => { setPaused(true); previewRef.current?.showModal(); }} aria-label={`放大查看${imageAlt}`}>
-            <img src={active.url} alt={imageAlt} loading="lazy" decoding="async" fetchPriority="low" />
-          </button>
-        )}
+        <button type="button" className="company-album-image-button" onClick={openPreview} aria-label={`浏览${album.name}相册`}>
+          {cover.mediaType.startsWith('video/')
+            ? <span className="video-cover"><b>▶</b><small>视频素材</small></span>
+            : <img src={cover.thumbnailUrl} alt={`${album.name}${cover.isDemo ? '示例封面' : cover.title || '最新投稿'}`} loading="lazy" decoding="async" width="720" height="480" />}
+        </button>
         <span className="company-album-badge"><b>{album.number}</b>{album.name}</span>
-        <span className="company-album-position">{String((index % media.length) + 1).padStart(2, '0')} / {String(media.length).padStart(2, '0')}</span>
-        {media.length > 1 && (
-          <div className="company-album-controls">
-            <button onClick={() => move(-1)} aria-label={`${album.name}上一份素材`}>←</button>
-            <button onClick={() => move(1)} aria-label={`${album.name}下一份素材`}>→</button>
-          </div>
-        )}
+        <span className="company-album-position">{items.length} 份投稿&nbsp; →</span>
       </div>
-      {!active.mediaType.startsWith('video/') && (
-        <dialog ref={previewRef} className="image-lightbox" onClose={() => setPaused(false)} onClick={(event) => { if (event.target === event.currentTarget) event.currentTarget.close(); }}>
-          <button type="button" className="image-lightbox-close" onClick={() => previewRef.current?.close()} aria-label="关闭图片预览">×</button>
-          <img src={active.url} alt={imageAlt} />
-        </dialog>
-      )}
+      <dialog ref={previewRef} className="image-lightbox" onClick={(event) => { if (event.target === event.currentTarget) event.currentTarget.close(); }}>
+        <button type="button" className="image-lightbox-close" onClick={() => previewRef.current?.close()} aria-label="关闭相册">×</button>
+        <div className="image-lightbox-media">
+          {active.mediaType.startsWith('video/')
+            ? <video src={active.url} aria-label={imageAlt} controls playsInline preload="metadata" />
+            : <img src={active.url} alt={imageAlt} />}
+          {media.length > 1 && <>
+            <button type="button" className="image-lightbox-prev" onClick={() => move(-1)} aria-label={`${album.name}上一份素材`}>←</button>
+            <button type="button" className="image-lightbox-next" onClick={() => move(1)} aria-label={`${album.name}下一份素材`}>→</button>
+          </>}
+        </div>
+        <div className="image-lightbox-caption">
+          <span>{album.number} / {album.name} · {String(index + 1).padStart(2, '0')} / {String(media.length).padStart(2, '0')}</span>
+          <h3>{active.title || '未填写素材标题'}</h3>
+          <p>{active.description || '未填写故事说明'}</p>
+        </div>
+      </dialog>
       <div className="company-album-copy">
         <div><span>COMPANY {album.number}</span><small>{items.length} 份用户投稿</small></div>
-        {active.isDemo ? (
-          <><h3>演示封面</h3><p className="album-empty-copy">暂无用户投稿。上传后，这里将显示用户填写的素材标题和故事说明。</p></>
-        ) : (
-          <><h3>{active.title || '未填写素材标题'}</h3><p>{active.description || '未填写故事说明'}</p></>
-        )}
-        {media.length > 1 && <div className="company-album-dots">{media.map((item, itemIndex) => <button key={item.id} className={itemIndex === index % media.length ? 'active' : ''} onClick={() => setIndex(itemIndex)} aria-label={`${album.name}第 ${itemIndex + 1} 份素材`} />)}</div>}
+        <h3>{cover.title || '未填写素材标题'}</h3>
       </div>
     </article>
   );
@@ -98,6 +105,23 @@ function CompanyAlbumCard({ album, items }: { album: CompanyAlbum; items: Galler
 
 function formatBytes(bytes: number) {
   return `${(bytes / 1024).toFixed(0)} KB`;
+}
+
+async function createThumbnail(file: File) {
+  if (!file.type.startsWith('image/')) return null;
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const scale = Math.min(1, 720 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(
+    (result) => result ? resolve(result) : reject(new Error('缩略图生成失败')),
+    'image/webp',
+    0.78,
+  ));
+  return new File([blob], 'thumbnail.webp', { type: 'image/webp' });
 }
 
 function MediaPicker({ file, onChange, currentImage, currentType }: {
@@ -108,6 +132,7 @@ function MediaPicker({ file, onChange, currentImage, currentType }: {
 }) {
   const preview = useMemo(() => (file ? URL.createObjectURL(file) : currentImage), [file, currentImage]);
   const isVideo = (file?.type || currentType || '').startsWith('video/');
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => () => {
     if (file && preview) URL.revokeObjectURL(preview);
@@ -118,19 +143,21 @@ function MediaPicker({ file, onChange, currentImage, currentType }: {
   }
 
   return (
-    <label className={`dropzone ${preview ? 'has-preview' : ''}`}>
-      {preview ? (
-        isVideo
-          ? <video src={preview} aria-label="待上传视频预览" controls muted playsInline />
-          // eslint-disable-next-line @next/next/no-img-element
-          : <img src={preview} alt="待上传照片预览" />
-      ) : <span className="dropzone-mark">＋</span>}
-      <span className="dropzone-copy">
-        <strong>{file ? file.name : currentImage ? '点击替换素材' : '选择照片或视频'}</strong>
-        <small>{file ? `${formatBytes(file.size)} · 点击重新选择` : 'JPEG / PNG / WebP / MP4 / MOV / WebM，最大 10MB'}</small>
-      </span>
-      <input type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm" onChange={pick} />
-    </label>
+    <div className="media-picker">
+      <label className={`dropzone ${preview ? 'has-preview' : ''}`}>
+        {preview ? (
+          isVideo
+            ? <video src={preview} aria-label="待上传视频预览" controls muted playsInline />
+            : <img src={preview} alt="待上传照片预览" />
+        ) : <span className="dropzone-mark">＋</span>}
+        <span className="dropzone-copy">
+          <strong>{file ? file.name : currentImage ? '点击替换素材' : '选择照片或视频'}</strong>
+          <small>{file ? `${formatBytes(file.size)} · 点击重新选择` : 'JPEG / PNG / WebP / MP4 / MOV / WebM，最大 10MB'}</small>
+        </span>
+        <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm" onChange={pick} />
+      </label>
+      {file && <button type="button" className="remove-media" onClick={() => { onChange(null); if (inputRef.current) inputRef.current.value = ''; }}>移除已选素材</button>}
+    </div>
   );
 }
 
@@ -146,7 +173,9 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [createdCredential, setCreatedCredential] = useState('');
+  const [copyMessage, setCopyMessage] = useState('点击复制上传码');
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([]);
+  const successRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
     fetch('/api/gallery')
@@ -154,6 +183,10 @@ export default function Home() {
       .then((data) => setGalleryItems(data.items || []))
       .catch(() => setGalleryItems([]));
   }, []);
+
+  useEffect(() => {
+    if (createdCredential && !successRef.current?.open) successRef.current?.showModal();
+  }, [createdCredential]);
 
   function resetFeedback() {
     setMessage('');
@@ -179,12 +212,17 @@ export default function Home() {
     data.set('image', image!);
     setBusy(true);
     try {
+      const thumbnail = await createThumbnail(image!);
+      if (thumbnail) data.set('thumbnail', thumbnail);
       const response = await fetch('/api/submissions', { method: 'POST', body: data });
       const result = (await response.json()) as { credential?: string; submission?: GalleryItem; error?: string };
       if (!response.ok) throw new Error(result.error || '上传失败');
+      setCopyMessage('点击复制上传码');
       setCreatedCredential(result.credential!);
       if (result.submission) setGalleryItems((current) => [result.submission!, ...current]);
       setImage(null);
+      setTitle('');
+      setDescription('');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '上传失败');
     } finally {
@@ -192,10 +230,10 @@ export default function Home() {
     }
   }
 
-  async function lookup(event?: FormEvent) {
+  async function lookup(event?: FormEvent, code = credential) {
     event?.preventDefault();
     resetFeedback();
-    const normalized = credential.trim().toUpperCase();
+    const normalized = code.trim().toUpperCase();
     if (!normalized) return setMessage('请输入上传码');
     setBusy(true);
     try {
@@ -228,6 +266,10 @@ export default function Home() {
     if (image) data.set('image', image);
     setBusy(true);
     try {
+      if (image) {
+        const thumbnail = await createThumbnail(image);
+        if (thumbnail) data.set('thumbnail', thumbnail);
+      }
       const response = await fetch(`/api/submissions/${encodeURIComponent(credential)}`, { method: 'PUT', body: data });
       const result = (await response.json()) as Submission & { error?: string };
       if (!response.ok) throw new Error(result.error || '保存失败');
@@ -250,7 +292,34 @@ export default function Home() {
   function openWorkspace(next: 'upload' | 'manage') {
     switchMode(next);
     setWorkspaceOpen(true);
-    window.setTimeout(() => document.getElementById('upload')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+    window.setTimeout(() => document.getElementById('upload')?.scrollIntoView({
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      block: 'start',
+    }), 0);
+  }
+
+  async function copyCredential() {
+    try {
+      await navigator.clipboard.writeText(createdCredential);
+      setCopyMessage('已复制，请妥善保存');
+    } catch {
+      setCopyMessage('复制失败，请手动选择上传码');
+    }
+  }
+
+  function closeSuccess() {
+    successRef.current?.close();
+    setCreatedCredential('');
+  }
+
+  async function viewCreatedSubmission() {
+    const code = createdCredential;
+    closeSuccess();
+    setMode('manage');
+    setWorkspaceOpen(true);
+    setCredential(code);
+    await lookup(undefined, code);
+    document.getElementById('upload')?.scrollIntoView({ block: 'start' });
   }
 
   return (
@@ -268,6 +337,10 @@ export default function Home() {
           <p className="eyebrow"><span /> SUGON GRADUATE TRAINING 2026</p>
           <h1>荣聚曙光<br /><span>梦想起航</span></h1>
           <p className="hero-intro">记录新曙光人的成长时刻。无需注册，选择连队即可上传；完成后自动生成上传码，之后随时回来修改。</p>
+          <div className="hero-actions">
+            <a href="#gallery">浏览连队风采</a>
+            <button type="button" onClick={() => openWorkspace('upload')}>上传我的瞬间&nbsp; →</button>
+          </div>
           <div className="hero-facts">
             <span><strong>16</strong> 青春连队</span>
             <span><strong>10MB</strong> 单份限额</span>
@@ -279,6 +352,20 @@ export default function Home() {
           <div className="pass-line"><span>荣聚曙光</span><span>梦想起航</span></div>
           <div className="pass-code">NEW SUGON · NEW LIGHT</div>
           <div className="pass-grid"><i /><i /><i /><i /><i /><i /><i /><i /></div>
+        </div>
+      </section>
+
+      <section className="gallery-section" id="gallery" aria-labelledby="gallery-title">
+        <div className="gallery-heading">
+          <div>
+            <p className="eyebrow"><span /> COMPANY ALBUMS</p>
+            <h2 id="gallery-title">十六个连队，十六本相册。</h2>
+          </div>
+          <p>真实投稿优先成为相册封面。点击任意连队，即可浏览其中的照片、视频和故事。</p>
+        </div>
+
+        <div className="company-album-grid">
+          {COMPANY_ALBUMS.map((album) => <CompanyAlbumCard key={album.name} album={album} items={galleryItems.filter((item) => item.company === album.name)} />)}
         </div>
       </section>
 
@@ -349,34 +436,19 @@ export default function Home() {
       </section>
       )}
 
-      <section className="gallery-section" id="gallery" aria-labelledby="gallery-title">
-        <div className="gallery-heading">
-          <div>
-            <p className="eyebrow"><span /> COMPANY ALBUMS</p>
-            <h2 id="gallery-title">十六个连队，十六本相册。</h2>
-          </div>
-          <p>所有连队同时展示。每个相册内部独立轮播，真实投稿会显示用户填写的素材标题和故事说明。</p>
-        </div>
-
-        <div className="company-album-grid">
-          {COMPANY_ALBUMS.map((album) => <CompanyAlbumCard key={album.name} album={album} items={galleryItems.filter((item) => item.company === album.name)} />)}
-        </div>
-      </section>
-
       <footer><span>© 2026 中科曙光应届生集训项目 · 荣聚曙光，梦想起航</span><a href="/admin">管理员入口</a></footer>
 
-      {createdCredential && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="success-title">
+      <dialog ref={successRef} className="success-dialog" aria-labelledby="success-title" onClose={() => setCreatedCredential('')}>
           <div className="success-card">
+            <button type="button" className="success-close" onClick={closeSuccess} aria-label="关闭上传成功提示">×</button>
             <span className="success-mark">✓</span>
             <p className="eyebrow">UPLOAD COMPLETE</p>
             <h2 id="success-title">这一刻，已经收好。</h2>
             <p>系统已自动生成专属上传码。请立即截图或复制保存，丢失后将无法找回或修改投稿。</p>
-            <button className="credential-card" onClick={() => navigator.clipboard.writeText(createdCredential)}><code>{createdCredential}</code><small>点击复制上传码</small></button>
-            <button className="primary-button" onClick={() => { setCreatedCredential(''); setMode('manage'); setCredential(createdCredential); }}>现在查看投稿 <span>→</span></button>
+            <button className="credential-card" onClick={copyCredential}><code>{createdCredential}</code><small>{copyMessage}</small></button>
+            <button className="primary-button" onClick={viewCreatedSubmission}>现在查看投稿 <span>→</span></button>
           </div>
-        </div>
-      )}
+      </dialog>
     </main>
   );
 }

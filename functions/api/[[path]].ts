@@ -24,6 +24,8 @@ import {
 } from '../../lib/data';
 import { matchRoute } from './router';
 
+const MAX_THUMBNAIL_SIZE = 1024 * 1024;
+
 function notAllowed(...methods: string[]) {
   return new Response('Method not allowed', { status: 405, headers: { Allow: methods.join(', ') } });
 }
@@ -46,15 +48,31 @@ async function findSubmission(env: AppEnv, credential: string) {
   return env.DB.prepare('SELECT * FROM submissions WHERE credential_hash = ?').bind(hash).first<SubmissionRow>();
 }
 
-async function mediaResponse(env: AppEnv, row: SubmissionRow | null, cacheControl: string) {
-  if (!row) return new Response('Not found', { status: 404 });
-  const object = await env.FILES.get(row.image_key);
+function thumbnailKey(imageKey: string) {
+  return `${imageKey}.preview.webp`;
+}
+
+async function objectResponse(object: R2ObjectBody | null, cacheControl: string) {
   if (!object) return new Response('Not found', { status: 404 });
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   headers.set('cache-control', cacheControl);
   headers.set('x-content-type-options', 'nosniff');
   return new Response(object.body, { headers });
+}
+
+async function mediaResponse(env: AppEnv, row: SubmissionRow | null, cacheControl: string) {
+  return objectResponse(row ? await env.FILES.get(row.image_key) : null, cacheControl);
+}
+
+async function thumbnailResponse(env: AppEnv, row: SubmissionRow | null) {
+  if (!row || !row.image_type.startsWith('image/')) return new Response('Not found', { status: 404 });
+  const preview = await env.FILES.get(thumbnailKey(row.image_key));
+  return objectResponse(preview || await env.FILES.get(row.image_key), 'public, max-age=31536000, immutable');
+}
+
+async function deleteMedia(env: AppEnv, imageKey: string) {
+  await Promise.all([env.FILES.delete(imageKey), env.FILES.delete(thumbnailKey(imageKey))]);
 }
 
 async function createSubmission(env: AppEnv, request: Request) {
@@ -64,11 +82,16 @@ async function createSubmission(env: AppEnv, request: Request) {
   const title = cleanText(form.get('title'), 60);
   const description = cleanText(form.get('description'), 300);
   const image = form.get('image');
+  const thumbnailValue = form.get('thumbnail');
+  const thumbnail = thumbnailValue instanceof File && thumbnailValue.size > 0 ? thumbnailValue : null;
 
   if (!validCompany(company)) return json({ error: '请选择正确的连队' }, 400);
   if (!(image instanceof File) || image.size === 0) return json({ error: '请选择照片或视频' }, 400);
   if (image.size > MAX_FILE_SIZE) return json({ error: '文件超过 10MB' }, 413);
   if (!ALLOWED_MEDIA_TYPES.has(image.type)) return json({ error: '只支持 JPEG、PNG、WebP、MP4、MOV 或 WebM' }, 415);
+  if (thumbnail && thumbnail.type !== 'image/webp') return json({ error: '缩略图必须为 WebP' }, 415);
+  if (thumbnail && thumbnail.size > MAX_THUMBNAIL_SIZE) return json({ error: '缩略图超过 1MB' }, 413);
+  if (thumbnail && !image.type.startsWith('image/')) return json({ error: '视频不接受图片缩略图' }, 400);
 
   const id = crypto.randomUUID();
   const credential = randomCredential();
@@ -76,10 +99,18 @@ async function createSubmission(env: AppEnv, request: Request) {
   const now = new Date().toISOString();
   const imageKey = `submissions/${id}/${crypto.randomUUID()}.${extensionFor(image.type)}`;
 
-  await env.FILES.put(imageKey, image.stream(), {
-    httpMetadata: { contentType: image.type },
-    customMetadata: { originalName: image.name.slice(0, 180) },
-  });
+  try {
+    await Promise.all([
+      env.FILES.put(imageKey, image.stream(), {
+        httpMetadata: { contentType: image.type },
+        customMetadata: { originalName: image.name.slice(0, 180) },
+      }),
+      thumbnail && env.FILES.put(thumbnailKey(imageKey), thumbnail.stream(), { httpMetadata: { contentType: 'image/webp' } }),
+    ]);
+  } catch (error) {
+    await deleteMedia(env, imageKey);
+    throw error;
+  }
 
   try {
     await env.DB.prepare(`INSERT INTO submissions (
@@ -90,7 +121,7 @@ async function createSubmission(env: AppEnv, request: Request) {
       imageKey, image.name.slice(0, 180), image.type, image.size, now, now,
     ).run();
   } catch (error) {
-    await env.FILES.delete(imageKey);
+    await deleteMedia(env, imageKey);
     throw error;
   }
 
@@ -107,7 +138,10 @@ async function updateSubmission(env: AppEnv, request: Request, credential: strin
   const title = cleanText(form.get('title'), 60);
   const description = cleanText(form.get('description'), 300);
   const image = form.get('image');
+  const thumbnailValue = form.get('thumbnail');
+  const thumbnail = thumbnailValue instanceof File && thumbnailValue.size > 0 ? thumbnailValue : null;
   if (!validCompany(company)) return json({ error: '请选择正确的连队' }, 400);
+  if (thumbnail && (!(image instanceof File) || image.size === 0)) return json({ error: '缩略图必须和新原图一起上传' }, 400);
 
   let imageKey = row.image_key;
   let imageName = row.image_name;
@@ -118,8 +152,19 @@ async function updateSubmission(env: AppEnv, request: Request, credential: strin
   if (image instanceof File && image.size > 0) {
     if (image.size > MAX_FILE_SIZE) return json({ error: '文件超过 10MB' }, 413);
     if (!ALLOWED_MEDIA_TYPES.has(image.type)) return json({ error: '只支持 JPEG、PNG、WebP、MP4、MOV 或 WebM' }, 415);
+    if (thumbnail && thumbnail.type !== 'image/webp') return json({ error: '缩略图必须为 WebP' }, 415);
+    if (thumbnail && thumbnail.size > MAX_THUMBNAIL_SIZE) return json({ error: '缩略图超过 1MB' }, 413);
+    if (thumbnail && !image.type.startsWith('image/')) return json({ error: '视频不接受图片缩略图' }, 400);
     newImageKey = `submissions/${row.id}/${crypto.randomUUID()}.${extensionFor(image.type)}`;
-    await env.FILES.put(newImageKey, image.stream(), { httpMetadata: { contentType: image.type } });
+    try {
+      await Promise.all([
+        env.FILES.put(newImageKey, image.stream(), { httpMetadata: { contentType: image.type } }),
+        thumbnail && env.FILES.put(thumbnailKey(newImageKey), thumbnail.stream(), { httpMetadata: { contentType: 'image/webp' } }),
+      ]);
+    } catch (error) {
+      await deleteMedia(env, newImageKey);
+      throw error;
+    }
     imageKey = newImageKey;
     imageName = image.name.slice(0, 180);
     imageType = image.type;
@@ -132,10 +177,10 @@ async function updateSubmission(env: AppEnv, request: Request, credential: strin
       image_key = ?, image_name = ?, image_type = ?, image_size = ?, updated_at = ? WHERE id = ?`)
       .bind(company, title, description, imageKey, imageName, imageType, imageSize, updatedAt, row.id).run();
   } catch (error) {
-    if (newImageKey) await env.FILES.delete(newImageKey);
+    if (newImageKey) await deleteMedia(env, newImageKey);
     throw error;
   }
-  if (newImageKey) await env.FILES.delete(row.image_key);
+  if (newImageKey) await deleteMedia(env, row.image_key);
 
   const updated = await env.DB.prepare('SELECT * FROM submissions WHERE id = ?').bind(row.id).first<SubmissionRow>();
   return json(publicSubmission(updated!));
@@ -145,12 +190,25 @@ async function listAdminSubmissions(env: AppEnv, request: Request) {
   const denied = await requireAdmin(env, request);
   if (denied) return denied;
   await ensureSchema(env);
-  const company = new URL(request.url).searchParams.get('company') || '';
+  const search = new URL(request.url).searchParams;
+  const company = search.get('company') || '';
+  const limit = Math.min(100, Math.max(1, Number(search.get('limit')) || 48));
+  const offset = Math.max(0, Number(search.get('offset')) || 0);
   const query = company
-    ? env.DB.prepare('SELECT * FROM submissions WHERE company = ? ORDER BY created_at DESC').bind(company)
-    : env.DB.prepare('SELECT * FROM submissions ORDER BY created_at DESC');
+    ? env.DB.prepare('SELECT * FROM submissions WHERE company = ? ORDER BY created_at DESC LIMIT ? OFFSET ?').bind(company, limit + 1, offset)
+    : env.DB.prepare('SELECT * FROM submissions ORDER BY created_at DESC LIMIT ? OFFSET ?').bind(limit + 1, offset);
   const result = await query.all<SubmissionRow>();
-  return json({ submissions: publicRows(result.results) });
+  const filteredTotal = company
+    ? await env.DB.prepare('SELECT COUNT(*) AS total FROM submissions WHERE company = ?').bind(company).first<{ total: number }>()
+    : await env.DB.prepare('SELECT COUNT(*) AS total FROM submissions').first<{ total: number }>();
+  const stats = await env.DB.prepare(`SELECT COUNT(*) AS total, COALESCE(SUM(image_size), 0) AS usedSpace,
+    COUNT(DISTINCT company) AS companyCount FROM submissions`).first<{ total: number; usedSpace: number; companyCount: number }>();
+  return json({
+    submissions: publicRows(result.results.slice(0, limit)),
+    hasMore: result.results.length > limit,
+    filteredTotal: filteredTotal?.total || 0,
+    stats: stats || { total: 0, usedSpace: 0, companyCount: 0 },
+  });
 }
 
 async function deleteAdminSubmissions(env: AppEnv, request: Request) {
@@ -165,7 +223,7 @@ async function deleteAdminSubmissions(env: AppEnv, request: Request) {
   const rows = await env.DB.prepare(`SELECT * FROM submissions WHERE id IN (${placeholders})`).bind(...ids).all<SubmissionRow>();
   const statements = rows.results.map((row) => env.DB.prepare('DELETE FROM submissions WHERE id = ?').bind(row.id));
   if (statements.length) await env.DB.batch(statements);
-  await Promise.all(rows.results.map((row) => env.FILES.delete(row.image_key)));
+  await Promise.all(rows.results.map((row) => deleteMedia(env, row.image_key)));
   return json({ deleted: rows.results.length });
 }
 
@@ -191,7 +249,7 @@ async function deleteAdminSubmission(env: AppEnv, request: Request, id: string) 
   const row = await env.DB.prepare('SELECT * FROM submissions WHERE id = ?').bind(id).first<SubmissionRow>();
   if (!row) return json({ error: '投稿不存在' }, 404);
   await env.DB.prepare('DELETE FROM submissions WHERE id = ?').bind(id).run();
-  await env.FILES.delete(row.image_key);
+  await deleteMedia(env, row.image_key);
   return json({ ok: true });
 }
 
@@ -251,7 +309,13 @@ export const onRequest: PagesFunction<AppEnv> = async ({ request, env }) => {
         if (request.method !== 'GET') return notAllowed('GET');
         await ensureSchema(env);
         const row = await env.DB.prepare('SELECT * FROM submissions WHERE id = ?').bind(route.value).first<SubmissionRow>();
-        return mediaResponse(env, row, 'public, max-age=300');
+        return mediaResponse(env, row, 'public, max-age=31536000, immutable');
+      }
+      case 'gallery-thumbnail': {
+        if (request.method !== 'GET') return notAllowed('GET');
+        await ensureSchema(env);
+        const row = await env.DB.prepare('SELECT * FROM submissions WHERE id = ?').bind(route.value).first<SubmissionRow>();
+        return thumbnailResponse(env, row);
       }
       case 'submissions':
         return request.method === 'POST' ? createSubmission(env, request) : notAllowed('POST');
