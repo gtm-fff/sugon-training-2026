@@ -1,5 +1,5 @@
 export type ApiRoute =
-  | { name: 'gallery' | 'gallery-like' | 'submissions' | 'admin-login' | 'admin-logout' | 'admin-session' | 'admin-submissions' | 'admin-export' | 'admin-company-admins' | 'admin-song' }
+  | { name: 'gallery' | 'gallery-like' | 'gallery-view' | 'submissions' | 'admin-login' | 'admin-logout' | 'admin-session' | 'admin-submissions' | 'admin-export' | 'admin-company-admins' | 'admin-song' }
   | { name: 'gallery-media' | 'gallery-thumbnail' | 'gallery-song' | 'submission' | 'submission-media' | 'admin-submission' | 'admin-submission-media' | 'admin-company-admin-reset'; value: string };
 
 export function matchRoute(pathname: string): ApiRoute | null {
@@ -7,6 +7,7 @@ export function matchRoute(pathname: string): ApiRoute | null {
   const path = parts.join('/');
   if (path === 'gallery') return { name: 'gallery' };
   if (path === 'gallery/like') return { name: 'gallery-like' };
+  if (path === 'gallery/view') return { name: 'gallery-view' };
   if (path === 'submissions') return { name: 'submissions' };
   if (path === 'admin/login') return { name: 'admin-login' };
   if (path === 'admin/logout') return { name: 'admin-logout' };

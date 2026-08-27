@@ -62,14 +62,16 @@ type CompanySong = {
 
 type CompanyAlbum = (typeof COMPANY_ALBUMS)[number];
 
-function CompanyAlbumCard({ album, items, song, likes, liked, liking, onLike }: {
+function CompanyAlbumCard({ album, items, song, likes, views, liked, liking, onLike, onView }: {
   album: CompanyAlbum;
   items: GalleryItem[];
   song?: CompanySong;
   likes: number;
+  views: number;
   liked: boolean;
   liking: boolean;
   onLike: () => void;
+  onView: () => void;
 }) {
   const media = items.length ? items.map((item) => ({
     ...item,
@@ -107,6 +109,7 @@ function CompanyAlbumCard({ album, items, song, likes, liked, liking, onLike }: 
   }, [playing, media.length]);
 
   function openPreview() {
+    onView();
     setIndex(0);
     setEffectIndex(Math.floor(Math.random() * MEMORY_EFFECTS.length));
     previewRef.current?.showModal();
@@ -167,9 +170,7 @@ function CompanyAlbumCard({ album, items, song, likes, liked, liking, onLike }: 
         <div><span>COMPANY {album.number}</span><small>{song ? '♫ 已设置队歌' : `${items.length} 份素材`}</small></div>
         <div className="company-album-title-row">
           <h3>{cover.title || '未填写素材标题'}</h3>
-          <button type="button" className={liked ? 'liked' : ''} disabled={liked || liking} onClick={onLike} aria-pressed={liked} aria-label={`${liked ? '已为' : '给'}${album.name}点赞`}>
-            {liked ? '♥' : '♡'} {likes}
-          </button>
+          <div className="company-album-metrics"><span aria-label={`${album.name}浏览量`}>浏览 {views}</span><button type="button" className={liked ? 'liked' : ''} disabled={liked || liking} onClick={onLike} aria-pressed={liked} aria-label={`${liked ? '已为' : '给'}${album.name}点赞`}>{liked ? '♥' : '♡'} {likes}</button></div>
         </div>
       </div>
     </article>
@@ -293,26 +294,32 @@ export default function Home() {
   const [galleryLoaded, setGalleryLoaded] = useState(false);
   const [submissionCount, setSubmissionCount] = useState(0);
   const [companyLikes, setCompanyLikes] = useState<Record<string, number>>({});
+  const [companyViews, setCompanyViews] = useState<Record<string, number>>({});
   const [companySongs, setCompanySongs] = useState<Record<string, CompanySong>>({});
   const [likedCompanies, setLikedCompanies] = useState<string[]>([]);
-  const [sortMode, setSortMode] = useState<'default' | 'popular'>('default');
+  const [viewedCompanies, setViewedCompanies] = useState<string[]>([]);
+  const [sortMode, setSortMode] = useState<'default' | 'likes' | 'views'>('default');
   const [likingCompany, setLikingCompany] = useState('');
   const [galleryMessage, setGalleryMessage] = useState('');
   const successRef = useRef<HTMLDialogElement>(null);
   const shareRef = useRef<HTMLDialogElement>(null);
-  const displayedAlbums = useMemo(() => sortMode === 'default' ? COMPANY_ALBUMS : [...COMPANY_ALBUMS].sort(
-    (left, right) => (companyLikes[right.name] || 0) - (companyLikes[left.name] || 0) || Number(left.number) - Number(right.number),
-  ), [sortMode, companyLikes]);
+  const displayedAlbums = useMemo(() => {
+    if (sortMode === 'default') return COMPANY_ALBUMS;
+    const metric = sortMode === 'likes' ? companyLikes : companyViews;
+    return [...COMPANY_ALBUMS].sort((left, right) => (metric[right.name] || 0) - (metric[left.name] || 0) || Number(left.number) - Number(right.number));
+  }, [sortMode, companyLikes, companyViews]);
 
   async function loadGallery() {
     try {
       const response = await fetch('/api/gallery');
-      const data = (await response.json()) as { items?: GalleryItem[]; submissionCount?: number; songs?: Record<string, CompanySong>; likes?: Record<string, number>; likedCompanies?: string[] };
+      const data = (await response.json()) as { items?: GalleryItem[]; submissionCount?: number; songs?: Record<string, CompanySong>; likes?: Record<string, number>; views?: Record<string, number>; likedCompanies?: string[]; viewedCompanies?: string[] };
       setGalleryItems(data.items || []);
       setSubmissionCount(data.submissionCount ?? data.items?.length ?? 0);
       setCompanySongs(data.songs || {});
       setCompanyLikes(data.likes || {});
+      setCompanyViews(data.views || {});
       setLikedCompanies(data.likedCompanies || []);
+      setViewedCompanies(data.viewedCompanies || []);
     } catch {
       setGalleryItems([]);
     } finally {
@@ -551,6 +558,26 @@ export default function Home() {
     }
   }
 
+  async function viewCompany(company: string) {
+    if (viewedCompanies.includes(company)) return;
+    setCompanyViews((current) => ({ ...current, [company]: (current[company] || 0) + 1 }));
+    setViewedCompanies((current) => [...current, company]);
+    try {
+      const response = await fetch('/api/gallery/view', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ company }),
+      });
+      const result = await response.json() as { views?: number; error?: string };
+      if (!response.ok) throw new Error(result.error || '浏览量记录失败');
+      setCompanyViews((current) => ({ ...current, [company]: result.views ?? current[company] ?? 0 }));
+    } catch (error) {
+      setCompanyViews((current) => ({ ...current, [company]: Math.max(0, (current[company] || 1) - 1) }));
+      setViewedCompanies((current) => current.filter((item) => item !== company));
+      setGalleryMessage(error instanceof Error ? error.message : '浏览量记录失败');
+    }
+  }
+
   return (
     <main className="site-shell">
       <nav className="topbar">
@@ -595,7 +622,8 @@ export default function Home() {
             <p>点击任意连队，即可伴随队歌自动播放照片、视频和故事。</p>
             <div className="gallery-sort" role="group" aria-label="连队相册排序">
               <button type="button" className={sortMode === 'default' ? 'active' : ''} onClick={() => setSortMode('default')}>默认排序</button>
-              <button type="button" className={sortMode === 'popular' ? 'active' : ''} onClick={() => setSortMode('popular')}>按人气排序</button>
+              <button type="button" className={sortMode === 'likes' ? 'active' : ''} onClick={() => setSortMode('likes')}>点赞量排序</button>
+              <button type="button" className={sortMode === 'views' ? 'active' : ''} onClick={() => setSortMode('views')}>浏览量排序</button>
             </div>
             {galleryMessage && <p className="gallery-message" role="status">{galleryMessage}</p>}
           </div>
@@ -608,9 +636,11 @@ export default function Home() {
             items={galleryItems.filter((item) => item.company === album.name)}
             song={companySongs[album.name]}
             likes={companyLikes[album.name] || 0}
+            views={companyViews[album.name] || 0}
             liked={likedCompanies.includes(album.name)}
             liking={likingCompany === album.name}
             onLike={() => likeCompany(album.name)}
+            onView={() => viewCompany(album.name)}
           />)}
         </div>
       </section>

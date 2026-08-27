@@ -91,6 +91,14 @@ export async function ensureSchema(env: AppEnv) {
       PRIMARY KEY (company, voter_hash)
     )`),
     db.prepare('CREATE INDEX IF NOT EXISTS idx_company_votes_company ON company_votes(company)'),
+    db.prepare(`CREATE TABLE IF NOT EXISTS company_views (
+      company TEXT NOT NULL,
+      viewer_hash TEXT NOT NULL,
+      view_date TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (company, viewer_hash, view_date)
+    )`),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_company_views_company ON company_views(company)'),
   ]);
   const table = await db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'submissions'").first<{ sql: string }>();
   if (table?.sql.includes('10485760')) {

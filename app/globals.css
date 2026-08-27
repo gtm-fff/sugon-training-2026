@@ -176,6 +176,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .company-album-copy > div:first-child span { color: var(--red); font: 800 9px ui-monospace, monospace; letter-spacing: .1em; }
 .company-album-copy > div:first-child small { color: var(--muted); font-size: 9px; }
 .company-album-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.company-album-metrics { display: flex; align-items: center; gap: 6px; }
+.company-album-metrics > span { color: var(--muted); font-size: 9px; font-weight: 750; white-space: nowrap; }
 .company-album-copy h3 { margin: 0; overflow: hidden; font-size: 17px; letter-spacing: -.035em; text-overflow: ellipsis; white-space: nowrap; }
 .company-album-title-row h3 { min-width: 0; }
 .company-album-title-row button { flex: 0 0 auto; height: 30px; min-width: 52px; padding: 0 9px; cursor: pointer; color: var(--red); background: transparent; border: 1px solid rgba(200,30,42,.3); font-size: 11px; font-weight: 850; }

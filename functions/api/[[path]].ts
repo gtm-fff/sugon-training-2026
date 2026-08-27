@@ -105,6 +105,10 @@ function voterCookie(request: Request, value: string) {
   return `${VOTER_COOKIE}=${value}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax${secure}`;
 }
 
+function chinaDate() {
+  return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 function publicRows(rows: SubmissionRow[]) {
   return rows.map(publicSubmission);
 }
@@ -379,13 +383,19 @@ async function updateSubmission(env: AppEnv, request: Request, credential: strin
 
 async function galleryPopularity(env: AppEnv, request: Request) {
   const counts = await env.DB.prepare('SELECT company, COUNT(*) AS likes FROM company_votes GROUP BY company').all<{ company: string; likes: number }>();
+  const viewCounts = await env.DB.prepare('SELECT company, COUNT(*) AS views FROM company_views GROUP BY company').all<{ company: string; views: number }>();
   const voter = voterId(request);
   const liked = voter
     ? (await env.DB.prepare('SELECT company FROM company_votes WHERE voter_hash = ?').bind(await sha256(voter)).all<{ company: string }>()).results.map((row) => row.company)
     : [];
+  const viewed = voter
+    ? (await env.DB.prepare('SELECT company FROM company_views WHERE viewer_hash = ? AND view_date = ?').bind(await sha256(voter), chinaDate()).all<{ company: string }>()).results.map((row) => row.company)
+    : [];
   return {
     likes: Object.fromEntries(counts.results.map((row) => [row.company, row.likes])),
+    views: Object.fromEntries(viewCounts.results.map((row) => [row.company, row.views])),
     likedCompanies: liked,
+    viewedCompanies: viewed,
   };
 }
 
@@ -402,6 +412,24 @@ async function likeCompany(env: AppEnv, request: Request) {
   const count = await env.DB.prepare('SELECT COUNT(*) AS likes FROM company_votes WHERE company = ?').bind(company).first<{ likes: number }>();
   return json(
     { company, likes: count?.likes || 0, liked: true, added: result.meta.changes > 0 },
+    200,
+    existingVoter ? undefined : { 'Set-Cookie': voterCookie(request, voter) },
+  );
+}
+
+async function viewCompany(env: AppEnv, request: Request) {
+  await ensureSchema(env);
+  const body = await request.json().catch(() => ({})) as { company?: string };
+  const company = (body.company || '').trim();
+  if (!validCompany(company)) return json({ error: '连队无效' }, 400);
+
+  const existingVoter = voterId(request);
+  const voter = existingVoter || crypto.randomUUID();
+  const result = await env.DB.prepare('INSERT OR IGNORE INTO company_views (company, viewer_hash, view_date, created_at) VALUES (?, ?, ?, ?)')
+    .bind(company, await sha256(voter), chinaDate(), new Date().toISOString()).run();
+  const count = await env.DB.prepare('SELECT COUNT(*) AS views FROM company_views WHERE company = ?').bind(company).first<{ views: number }>();
+  return json(
+    { company, views: count?.views || 0, viewed: true, added: result.meta.changes > 0 },
     200,
     existingVoter ? undefined : { 'Set-Cookie': voterCookie(request, voter) },
   );
@@ -686,6 +714,8 @@ export const onRequest: PagesFunction<AppEnv> = async ({ request, env }) => {
       }
       case 'gallery-like':
         return request.method === 'POST' ? likeCompany(env, request) : notAllowed('POST');
+      case 'gallery-view':
+        return request.method === 'POST' ? viewCompany(env, request) : notAllowed('POST');
       case 'gallery-media': {
         if (request.method !== 'GET') return notAllowed('GET');
         await ensureSchema(env);

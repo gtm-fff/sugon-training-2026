@@ -8,6 +8,7 @@ import { extensionFor } from '../lib/data.ts';
 test('Pages API routes keep dynamic credentials and ids', () => {
   assert.deepEqual(matchRoute('/api/gallery'), { name: 'gallery' });
   assert.deepEqual(matchRoute('/api/gallery/like'), { name: 'gallery-like' });
+  assert.deepEqual(matchRoute('/api/gallery/view'), { name: 'gallery-view' });
   assert.deepEqual(matchRoute('/api/gallery/record-id/thumbnail'), { name: 'gallery-thumbnail', value: 'record-id' });
   assert.deepEqual(matchRoute('/api/gallery/%E4%B8%80%E8%BF%9E/song'), { name: 'gallery-song', value: '一连' });
   assert.deepEqual(matchRoute('/api/submissions/ABCD-EFGH-JKLM'), { name: 'submission', value: 'ABCD-EFGH-JKLM' });
