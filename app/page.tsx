@@ -1,6 +1,6 @@
 'use client';
 
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 
 const COMPANIES = [
   '一连', '二连', '三连', '四连', '五连', '六连', '七连', '八连',
@@ -44,7 +44,9 @@ function CompanyAlbumCard({ album, items }: { album: CompanyAlbum; items: Galler
   ];
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+  const previewRef = useRef<HTMLDialogElement>(null);
   const active = media[index % media.length];
+  const imageAlt = `${album.name}${active.isDemo ? '演示封面' : active.title || '投稿素材'}`;
 
   useEffect(() => {
     if (paused || media.length < 2) return;
@@ -57,13 +59,14 @@ function CompanyAlbumCard({ album, items }: { album: CompanyAlbum; items: Galler
   }
 
   return (
-    <article className="company-album-card" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+    <article className="company-album-card" onMouseEnter={() => setPaused(true)} onMouseLeave={() => { if (!previewRef.current?.open) setPaused(false); }}>
       <div className="company-album-media">
         {active.mediaType.startsWith('video/') ? (
           <video src={active.url} controls muted playsInline preload="metadata" onPlay={() => setPaused(true)} onPause={() => setPaused(false)} />
         ) : (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={active.url} alt={`${album.name}${active.isDemo ? '演示封面' : active.title || '投稿素材'}`} loading="lazy" decoding="async" fetchPriority="low" />
+          <button type="button" className="company-album-image-button" onClick={() => { setPaused(true); previewRef.current?.showModal(); }} aria-label={`放大查看${imageAlt}`}>
+            <img src={active.url} alt={imageAlt} loading="lazy" decoding="async" fetchPriority="low" />
+          </button>
         )}
         <span className="company-album-badge"><b>{album.number}</b>{album.name}</span>
         <span className="company-album-position">{String((index % media.length) + 1).padStart(2, '0')} / {String(media.length).padStart(2, '0')}</span>
@@ -74,6 +77,12 @@ function CompanyAlbumCard({ album, items }: { album: CompanyAlbum; items: Galler
           </div>
         )}
       </div>
+      {!active.mediaType.startsWith('video/') && (
+        <dialog ref={previewRef} className="image-lightbox" onClose={() => setPaused(false)} onClick={(event) => { if (event.target === event.currentTarget) event.currentTarget.close(); }}>
+          <button type="button" className="image-lightbox-close" onClick={() => previewRef.current?.close()} aria-label="关闭图片预览">×</button>
+          <img src={active.url} alt={imageAlt} />
+        </dialog>
+      )}
       <div className="company-album-copy">
         <div><span>COMPANY {album.number}</span><small>{items.length} 份用户投稿</small></div>
         {active.isDemo ? (
@@ -257,12 +266,11 @@ export default function Home() {
       <section className="hero" id="top">
         <div className="hero-copy">
           <p className="eyebrow"><span /> SUGON GRADUATE TRAINING 2026</p>
-          <h1>荣聚曙光，<br /><span>梦想起航</span>。</h1>
+          <h1>荣聚曙光<br /><span>梦想起航</span></h1>
           <p className="hero-intro">记录新曙光人的成长时刻。无需注册，选择连队即可上传；完成后自动生成上传码，之后随时回来修改。</p>
           <div className="hero-facts">
             <span><strong>16</strong> 青春连队</span>
             <span><strong>10MB</strong> 单份限额</span>
-            <span><strong>∞</strong> 凭码可改</span>
           </div>
         </div>
         <div className="pass-card" aria-hidden="true">
