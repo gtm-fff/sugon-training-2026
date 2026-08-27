@@ -18,6 +18,7 @@ const SHARE_URL = 'https://sugon-training-2026.pages.dev';
 const BROWSER_CREDENTIAL_KEY = 'sugon-training-upload-code';
 const AUDIO_TYPES = ['audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/x-m4a', 'audio/aac', 'audio/wav', 'audio/x-wav', 'audio/wave'];
 const VISUAL_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif', 'image/bmp', 'video/mp4', 'video/quicktime', 'video/webm'];
+const MEMORY_EFFECTS = ['memory-fade', 'memory-zoom-in', 'memory-zoom-out', 'memory-pan-left', 'memory-pan-right'];
 
 type Submission = {
   id: string;
@@ -86,6 +87,7 @@ function CompanyAlbumCard({ album, items, song, likes, liked, liking, onLike }: 
     isDemo: true,
   }];
   const [index, setIndex] = useState(0);
+  const [effectIndex, setEffectIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [audioBlocked, setAudioBlocked] = useState(false);
   const previewRef = useRef<HTMLDialogElement>(null);
@@ -95,6 +97,7 @@ function CompanyAlbumCard({ album, items, song, likes, liked, liking, onLike }: 
   const imageAlt = `${album.name}${active.isDemo ? '演示封面' : active.title || '投稿素材'}`;
 
   function move(delta: number) {
+    setEffectIndex((current) => (current + 1 + Math.floor(Math.random() * (MEMORY_EFFECTS.length - 1))) % MEMORY_EFFECTS.length);
     setIndex((current) => (current + delta + media.length) % media.length);
   }
 
@@ -106,6 +109,7 @@ function CompanyAlbumCard({ album, items, song, likes, liked, liking, onLike }: 
 
   function openPreview() {
     setIndex(0);
+    setEffectIndex(Math.floor(Math.random() * MEMORY_EFFECTS.length));
     previewRef.current?.showModal();
     setPlaying(true);
     setAudioBlocked(false);
@@ -142,8 +146,8 @@ function CompanyAlbumCard({ album, items, song, likes, liked, liking, onLike }: 
         <button type="button" className="image-lightbox-close" onClick={() => previewRef.current?.close()} aria-label="关闭相册">×</button>
         <div className="image-lightbox-media">
           {active.mediaType.startsWith('video/')
-            ? <video key={active.id} src={active.url} aria-label={imageAlt} controls muted autoPlay={playing} playsInline preload="metadata" />
-            : <img key={active.id} className={playing ? 'memory-frame' : ''} src={active.url} alt={imageAlt} />}
+            ? <video key={active.id} className={playing ? MEMORY_EFFECTS[effectIndex] : ''} src={active.url} aria-label={imageAlt} controls muted autoPlay={playing} playsInline preload="metadata" />
+            : <img key={active.id} className={playing ? MEMORY_EFFECTS[effectIndex] : ''} src={active.url} alt={imageAlt} />}
           {media.length > 1 && <>
             <button type="button" className="image-lightbox-prev" onClick={() => move(-1)} aria-label={`${album.name}上一份素材`}>←</button>
             <button type="button" className="image-lightbox-next" onClick={() => move(1)} aria-label={`${album.name}下一份素材`}>→</button>
@@ -639,8 +643,7 @@ export default function Home() {
           <p>HOW IT WORKS</p>
           <ol>
             <li className={mode === 'upload' ? 'active' : ''}><b>01</b><span>选择连队<br /><small>无需注册登录</small></span></li>
-            <li><b>02</b><span>上传素材<br /><small>照片、视频或队歌</small></span></li>
-            <li className={mode === 'manage' ? 'active' : ''}><b>03</b><span>获得上传码<br /><small>随时查询修改</small></span></li>
+            <li className={mode === 'manage' ? 'active' : ''}><b>02</b><span>获得上传码<br /><small>随时查询修改</small></span></li>
           </ol>
           <div className="demo-note"><strong>上传完成后自动生成</strong><code>XXXX-XXXX-XXXX</code><small>请截图或复制保存</small></div>
         </div>
