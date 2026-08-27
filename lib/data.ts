@@ -8,7 +8,7 @@ export type AppEnv = {
 
 export const MAX_FILE_SIZE = 25 * 1024 * 1024;
 export const ALLOWED_MEDIA_TYPES = new Set([
-  'image/jpeg', 'image/png', 'image/webp',
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
   'video/mp4', 'video/quicktime', 'video/webm',
 ]);
 export const COMPANIES = new Set([
@@ -111,6 +111,7 @@ export function validCompany(value: string) {
 export function extensionFor(type: string) {
   if (type === 'image/png') return 'png';
   if (type === 'image/webp') return 'webp';
+  if (type === 'image/gif') return 'gif';
   if (type === 'video/mp4') return 'mp4';
   if (type === 'video/quicktime') return 'mov';
   if (type === 'video/webm') return 'webm';
