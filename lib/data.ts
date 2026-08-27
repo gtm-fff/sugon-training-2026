@@ -78,6 +78,12 @@ export async function ensureSchema(env: AppEnv) {
       updated_at TEXT NOT NULL
     )`),
     db.prepare('CREATE INDEX IF NOT EXISTS idx_company_songs_owner ON company_songs(owner_submission_id)'),
+    db.prepare(`CREATE TABLE IF NOT EXISTS company_admins (
+      company TEXT PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS company_votes (
       company TEXT NOT NULL,
       voter_hash TEXT NOT NULL,

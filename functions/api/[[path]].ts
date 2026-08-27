@@ -1,15 +1,20 @@
 import { strToU8, zipSync } from 'fflate';
 import {
   clearAdminCookie,
+  companyDefaultPassword,
+  companyPasswordHash,
   createAdminCookie,
-  isAdmin,
+  getAdminSession,
   requireAdmin,
+  requireSystemAdmin,
   validAdminLogin,
+  validCompanyPassword,
 } from '../../lib/admin';
 import {
   AUDIO_MEDIA_TYPES,
   type AppEnv,
   cleanText,
+  COMPANIES,
   ensureSchema,
   errorMessage,
   extensionFor,
@@ -52,9 +57,31 @@ type CompanySongRow = {
   updated_at: string;
 };
 
+type CompanyAdminRow = {
+  company: string;
+  username: string;
+  password_hash: string;
+  updated_at: string;
+};
+
 type UploadMedia = { image: File; display: File | null; thumbnail: File | null };
 type StoredMedia = UploadMedia & { id: string; imageKey: string; position: number };
 type StoredSong = { file: File; audioKey: string };
+let companyAdminsReady = false;
+
+async function ensureCompanyAdmins(env: AppEnv) {
+  if (companyAdminsReady) return;
+  await ensureSchema(env);
+  const now = new Date().toISOString();
+  const statements = await Promise.all([...COMPANIES].map(async (company, index) => {
+    const username = `company${String(index + 1).padStart(2, '0')}`;
+    const password = await companyDefaultPassword(env, company);
+    return env.DB.prepare(`INSERT OR IGNORE INTO company_admins (company, username, password_hash, updated_at)
+      VALUES (?, ?, ?, ?)`).bind(company, username, await companyPasswordHash(env, username, password), now);
+  }));
+  await env.DB.batch(statements);
+  companyAdminsReady = true;
+}
 
 function notAllowed(...methods: string[]) {
   return new Response('Method not allowed', { status: 405, headers: { Allow: methods.join(', ') } });
@@ -216,6 +243,13 @@ async function galleryMedia(env: AppEnv, id: string): Promise<MediaObject | null
   return submission || env.DB.prepare('SELECT image_key, image_type FROM submission_media WHERE id = ?').bind(id).first<MediaObject>();
 }
 
+async function adminGalleryMedia(env: AppEnv, id: string, company = ''): Promise<MediaObject | null> {
+  if (!company) return galleryMedia(env, id);
+  const submission = await env.DB.prepare('SELECT image_key, image_type FROM submissions WHERE id = ? AND company = ?').bind(id, company).first<MediaObject>();
+  return submission || env.DB.prepare(`SELECT sm.image_key, sm.image_type FROM submission_media sm
+    JOIN submissions s ON s.id = sm.submission_id WHERE sm.id = ? AND s.company = ?`).bind(id, company).first<MediaObject>();
+}
+
 function publicMedia(row: Pick<SubmissionMediaRow, 'id' | 'image_name' | 'image_type' | 'image_size' | 'position'>) {
   return { id: row.id, imageName: row.image_name, mediaType: row.image_type, imageSize: row.image_size, position: row.position };
 }
@@ -244,23 +278,19 @@ async function createSubmission(env: AppEnv, request: Request) {
   const { count, uploads, song } = parseMediaUploads(form);
 
   if (!validCompany(company)) return json({ error: '请选择正确的连队' }, 400);
-  const mediaError = validateMediaUploads(count, uploads, song);
+  if (song) return json({ error: '队歌仅限连队管理员上传' }, 403);
+  const mediaError = validateMediaUploads(count, uploads, null);
   if (mediaError) return mediaError;
-  if (song && await env.DB.prepare('SELECT company FROM company_songs WHERE company = ?').bind(company).first()) {
-    return json({ error: `${company}已有队歌，请由原上传码或管理员更换` }, 409);
-  }
 
   const id = crypto.randomUUID();
   const credential = randomCredential();
   const credentialHash = await sha256(credential);
   const now = new Date().toISOString();
   let stored: StoredMedia[] = [];
-  let storedSong: StoredSong | null = null;
 
   try {
-    if (song) storedSong = await storeSong(env, id, song);
-    if (uploads.length) stored = await storeMediaSet(env, id, uploads);
-    const first = stored[0] || { imageKey: storedSong!.audioKey, image: storedSong!.file };
+    stored = await storeMediaSet(env, id, uploads);
+    const first = stored[0];
     await env.DB.batch([
       env.DB.prepare(`INSERT INTO submissions (
       id, credential_hash, company, title, description,
@@ -274,17 +304,9 @@ async function createSubmission(env: AppEnv, request: Request) {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(
         item.id, id, item.imageKey, item.image.name.slice(0, 180), item.image.type, item.image.size, item.position, now,
       )),
-      ...(storedSong ? [env.DB.prepare(`INSERT INTO company_songs (
-        company, owner_submission_id, audio_key, audio_name, audio_type, audio_size, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(
-        company, id, storedSong.audioKey, storedSong.file.name.slice(0, 180), storedSong.file.type, storedSong.file.size, now, now,
-      )] : []),
     ]);
   } catch (error) {
-    await Promise.all([
-      ...stored.map((item) => deleteMedia(env, item.imageKey)),
-      ...(storedSong ? [deleteMedia(env, storedSong.audioKey)] : []),
-    ]);
+    await Promise.all(stored.map((item) => deleteMedia(env, item.imageKey)));
     throw error;
   }
 
@@ -306,39 +328,31 @@ async function updateSubmission(env: AppEnv, request: Request, credential: strin
   const replacingMedia = hasVisualUpload && !append;
   const appendingMedia = hasVisualUpload && append;
   if (!validCompany(company)) return json({ error: '请选择正确的连队' }, 400);
-  const mediaError = validateMediaUploads(parsed.count, parsed.uploads, parsed.song, false);
+  if (parsed.song) return json({ error: '队歌仅限连队管理员上传' }, 403);
+  const mediaError = validateMediaUploads(parsed.count, parsed.uploads, null, false);
   if (mediaError) return mediaError;
 
   const ownerSong = await env.DB.prepare('SELECT * FROM company_songs WHERE owner_submission_id = ?').bind(row.id).first<CompanySongRow>();
-  if (parsed.song || (ownerSong && ownerSong.company !== company)) {
-    const companySong = await env.DB.prepare('SELECT * FROM company_songs WHERE company = ?').bind(company).first<CompanySongRow>();
-    if (companySong && companySong.owner_submission_id !== row.id) {
-      return json({ error: `${company}已有队歌，请由原上传码或管理员更换` }, 409);
-    }
-  }
 
   const oldExtras = replacingMedia ? await extraMedia(env, row.id) : [];
   const lastPosition = appendingMedia
     ? await env.DB.prepare('SELECT COALESCE(MAX(position), 0) AS position FROM submission_media WHERE submission_id = ?').bind(row.id).first<{ position: number }>()
     : null;
   let stored: StoredMedia[] = [];
-  let storedSong: StoredSong | null = null;
   const updatedAt = new Date().toISOString();
   try {
-    if (parsed.song) storedSong = await storeSong(env, row.id, parsed.song);
     if (replacingMedia) stored = await storeMediaSet(env, row.id, parsed.uploads);
     if (appendingMedia) stored = await storeMediaSet(env, row.id, parsed.uploads, (lastPosition?.position || 0) + 1, false);
     const first = replacingMedia ? stored[0] : null;
-    const baseSong = storedSong && row.image_type.startsWith('audio/') && ownerSong?.audio_key === row.image_key && !first ? storedSong : null;
     await env.DB.batch([
       env.DB.prepare(`UPDATE submissions SET company = ?, title = ?, description = ?,
       image_key = ?, image_name = ?, image_type = ?, image_size = ?, updated_at = ? WHERE id = ?`)
         .bind(
           company, title, description,
-          first?.imageKey || baseSong?.audioKey || row.image_key,
-          first?.image.name.slice(0, 180) || baseSong?.file.name.slice(0, 180) || row.image_name,
-          first?.image.type || baseSong?.file.type || row.image_type,
-          first?.image.size || baseSong?.file.size || row.image_size,
+          first?.imageKey || row.image_key,
+          first?.image.name.slice(0, 180) || row.image_name,
+          first?.image.type || row.image_type,
+          first?.image.size || row.image_size,
           updatedAt, row.id,
         ),
       ...(replacingMedia ? [env.DB.prepare('DELETE FROM submission_media WHERE submission_id = ?').bind(row.id)] : []),
@@ -347,27 +361,9 @@ async function updateSubmission(env: AppEnv, request: Request, credential: strin
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(
         item.id, row.id, item.imageKey, item.image.name.slice(0, 180), item.image.type, item.image.size, item.position, updatedAt,
       )),
-      ...(storedSong && ownerSong?.company !== company
-        ? [env.DB.prepare('DELETE FROM company_songs WHERE owner_submission_id = ?').bind(row.id)]
-        : []),
-      ...(storedSong ? [env.DB.prepare(`INSERT INTO company_songs (
-        company, owner_submission_id, audio_key, audio_name, audio_type, audio_size, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(company) DO UPDATE SET audio_key = excluded.audio_key, audio_name = excluded.audio_name,
-        audio_type = excluded.audio_type, audio_size = excluded.audio_size, updated_at = excluded.updated_at
-      WHERE owner_submission_id = excluded.owner_submission_id`).bind(
-        company, row.id, storedSong.audioKey, storedSong.file.name.slice(0, 180), storedSong.file.type, storedSong.file.size,
-        ownerSong?.created_at || updatedAt, updatedAt,
-      )] : []),
-      ...(!storedSong && ownerSong?.company !== company
-        ? [env.DB.prepare('UPDATE company_songs SET company = ?, updated_at = ? WHERE owner_submission_id = ?').bind(company, updatedAt, row.id)]
-        : []),
     ]);
   } catch (error) {
-    await Promise.all([
-      ...stored.map((item) => deleteMedia(env, item.imageKey)),
-      ...(storedSong ? [deleteMedia(env, storedSong.audioKey)] : []),
-    ]);
+    await Promise.all(stored.map((item) => deleteMedia(env, item.imageKey)));
     throw error;
   }
   const obsoleteKeys = new Set<string>();
@@ -375,7 +371,6 @@ async function updateSubmission(env: AppEnv, request: Request, credential: strin
     if (row.image_key !== ownerSong?.audio_key) obsoleteKeys.add(row.image_key);
     oldExtras.forEach((item) => obsoleteKeys.add(item.image_key));
   }
-  if (storedSong && ownerSong?.audio_key && ownerSong.audio_key !== storedSong.audioKey) obsoleteKeys.add(ownerSong.audio_key);
   await Promise.all([...obsoleteKeys].map((key) => deleteMedia(env, key)));
 
   const updated = await env.DB.prepare('SELECT * FROM submissions WHERE id = ?').bind(row.id).first<SubmissionRow>();
@@ -412,12 +407,101 @@ async function likeCompany(env: AppEnv, request: Request) {
   );
 }
 
+async function loginAdmin(env: AppEnv, request: Request) {
+  const body = await request.json().catch(() => ({})) as { username?: string; password?: string; mode?: 'system' | 'company' };
+  const username = (body.username || '').trim();
+  const password = body.password || '';
+  if (body.mode !== 'company' && validAdminLogin(env, username, password)) {
+    return json({ role: 'system', company: '' }, 200, { 'Set-Cookie': await createAdminCookie(env, request) });
+  }
+  if (body.mode === 'system') return json({ error: '系统管理员账号或密码错误' }, 401);
+
+  await ensureCompanyAdmins(env);
+  const row = await env.DB.prepare('SELECT * FROM company_admins WHERE username = ?').bind(username).first<CompanyAdminRow>();
+  if (!row || !await validCompanyPassword(env, username, password, row.password_hash)) return json({ error: '连队管理员账号或密码错误' }, 401);
+  return json({ role: 'company', company: row.company }, 200, { 'Set-Cookie': await createAdminCookie(env, request, 'company', row.company) });
+}
+
+async function listCompanyAdmins(env: AppEnv, request: Request) {
+  const denied = await requireSystemAdmin(env, request);
+  if (denied) return denied;
+  await ensureCompanyAdmins(env);
+  const rows = await env.DB.prepare('SELECT company, username, updated_at FROM company_admins ORDER BY username').all<Pick<CompanyAdminRow, 'company' | 'username' | 'updated_at'>>();
+  return json({ admins: rows.results.map((row) => ({ company: row.company, username: row.username, updatedAt: row.updated_at })) });
+}
+
+async function resetCompanyAdmin(env: AppEnv, request: Request, company: string) {
+  const denied = await requireSystemAdmin(env, request);
+  if (denied) return denied;
+  if (!validCompany(company)) return json({ error: '连队无效' }, 400);
+  await ensureCompanyAdmins(env);
+  const row = await env.DB.prepare('SELECT * FROM company_admins WHERE company = ?').bind(company).first<CompanyAdminRow>();
+  if (!row) return json({ error: '连队管理员不存在' }, 404);
+  const password = await companyDefaultPassword(env, company);
+  const updatedAt = new Date().toISOString();
+  await env.DB.prepare('UPDATE company_admins SET password_hash = ?, updated_at = ? WHERE company = ?')
+    .bind(await companyPasswordHash(env, row.username, password), updatedAt, company).run();
+  return json({ company, username: row.username, defaultPassword: password }, 200, { 'cache-control': 'no-store' });
+}
+
+async function manageCompanySong(env: AppEnv, request: Request) {
+  const session = await getAdminSession(env, request);
+  if (!session) return json({ error: '管理员登录已失效，请重新登录' }, 401);
+  await ensureSchema(env);
+  const searchCompany = new URL(request.url).searchParams.get('company') || '';
+
+  if (request.method === 'GET') {
+    const company = session.role === 'company' ? session.company : searchCompany;
+    if (!validCompany(company)) return json({ error: '请选择连队' }, 400);
+    const song = await env.DB.prepare('SELECT * FROM company_songs WHERE company = ?').bind(company).first<CompanySongRow>();
+    return json({ song: publicSong(song) });
+  }
+
+  if (request.method === 'DELETE') {
+    const company = session.role === 'company' ? session.company : searchCompany;
+    if (!validCompany(company)) return json({ error: '请选择连队' }, 400);
+    const song = await env.DB.prepare('SELECT * FROM company_songs WHERE company = ?').bind(company).first<CompanySongRow>();
+    if (!song) return json({ error: '该连队尚未设置队歌' }, 404);
+    await env.DB.prepare('DELETE FROM company_songs WHERE company = ?').bind(company).run();
+    await deleteMedia(env, song.audio_key);
+    return json({ ok: true });
+  }
+
+  if (request.method !== 'POST') return notAllowed('GET', 'POST', 'DELETE');
+  const form = await request.formData();
+  const company = session.role === 'company' ? session.company : cleanText(form.get('company'), 20);
+  const value = form.get('song');
+  const file = value instanceof File && value.size > 0 ? value : null;
+  if (!validCompany(company)) return json({ error: '请选择连队' }, 400);
+  if (!file) return json({ error: '请选择队歌文件' }, 400);
+  if (!AUDIO_MEDIA_TYPES.has(file.type)) return json({ error: '队歌只支持 MP3、M4A、AAC 或 WAV' }, 415);
+  if (file.size > MAX_FILE_SIZE) return json({ error: '队歌不能超过 25MB' }, 413);
+
+  const oldSong = await env.DB.prepare('SELECT * FROM company_songs WHERE company = ?').bind(company).first<CompanySongRow>();
+  const stored = await storeSong(env, `admin-${company}`, file);
+  const now = new Date().toISOString();
+  try {
+    await env.DB.prepare(`INSERT INTO company_songs (
+      company, owner_submission_id, audio_key, audio_name, audio_type, audio_size, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(company) DO UPDATE SET owner_submission_id = excluded.owner_submission_id, audio_key = excluded.audio_key,
+      audio_name = excluded.audio_name, audio_type = excluded.audio_type, audio_size = excluded.audio_size, updated_at = excluded.updated_at`)
+      .bind(company, `admin:${company}`, stored.audioKey, file.name.slice(0, 180), file.type, file.size, oldSong?.created_at || now, now).run();
+  } catch (error) {
+    await deleteMedia(env, stored.audioKey);
+    throw error;
+  }
+  if (oldSong?.audio_key && oldSong.audio_key !== stored.audioKey) await deleteMedia(env, oldSong.audio_key);
+  return json({ song: publicSong(await env.DB.prepare('SELECT * FROM company_songs WHERE company = ?').bind(company).first<CompanySongRow>()) });
+}
+
 async function listAdminSubmissions(env: AppEnv, request: Request) {
   const denied = await requireAdmin(env, request);
   if (denied) return denied;
+  const session = (await getAdminSession(env, request))!;
   await ensureSchema(env);
   const search = new URL(request.url).searchParams;
-  const company = search.get('company') || '';
+  const company = session.role === 'company' ? session.company : search.get('company') || '';
   const limit = Math.min(100, Math.max(1, Number(search.get('limit')) || 48));
   const offset = Math.max(0, Number(search.get('offset')) || 0);
   const query = company
@@ -433,10 +517,16 @@ async function listAdminSubmissions(env: AppEnv, request: Request) {
   const filteredTotal = company
     ? await env.DB.prepare('SELECT COUNT(*) AS total FROM submissions WHERE company = ?').bind(company).first<{ total: number }>()
     : await env.DB.prepare('SELECT COUNT(*) AS total FROM submissions').first<{ total: number }>();
-  const stats = await env.DB.prepare(`SELECT COUNT(*) AS total,
-    COALESCE(SUM(image_size), 0) + (SELECT COALESCE(SUM(image_size), 0) FROM submission_media) +
-    (SELECT COALESCE(SUM(audio_size), 0) FROM company_songs WHERE audio_key NOT IN (SELECT image_key FROM submissions)) AS usedSpace,
-    COUNT(DISTINCT company) AS companyCount FROM submissions`).first<{ total: number; usedSpace: number; companyCount: number }>();
+  const stats = company
+    ? await env.DB.prepare(`SELECT COUNT(*) AS total,
+      COALESCE(SUM(image_size), 0) +
+      (SELECT COALESCE(SUM(sm.image_size), 0) FROM submission_media sm JOIN submissions s ON s.id = sm.submission_id WHERE s.company = ?) +
+      (SELECT COALESCE(SUM(audio_size), 0) FROM company_songs WHERE company = ? AND audio_key NOT IN (SELECT image_key FROM submissions)) AS usedSpace,
+      CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END AS companyCount FROM submissions WHERE company = ?`).bind(company, company, company).first<{ total: number; usedSpace: number; companyCount: number }>()
+    : await env.DB.prepare(`SELECT COUNT(*) AS total,
+      COALESCE(SUM(image_size), 0) + (SELECT COALESCE(SUM(image_size), 0) FROM submission_media) +
+      (SELECT COALESCE(SUM(audio_size), 0) FROM company_songs WHERE audio_key NOT IN (SELECT image_key FROM submissions)) AS usedSpace,
+      COUNT(DISTINCT company) AS companyCount FROM submissions`).first<{ total: number; usedSpace: number; companyCount: number }>();
   return json({
     submissions: publicRows(pageRows).map((item) => ({ ...item, mediaCount: countBySubmission[item.id] || 1 })),
     hasMore: result.results.length > limit,
@@ -448,18 +538,24 @@ async function listAdminSubmissions(env: AppEnv, request: Request) {
 async function deleteAdminSubmissions(env: AppEnv, request: Request) {
   const denied = await requireAdmin(env, request);
   if (denied) return denied;
+  const session = (await getAdminSession(env, request))!;
   await ensureSchema(env);
   const body = await request.json().catch(() => ({})) as { ids?: string[] };
   const ids = [...new Set((body.ids || []).filter((id) => typeof id === 'string'))].slice(0, 100);
   if (!ids.length) return json({ error: '请选择要删除的投稿' }, 400);
 
-  const placeholders = ids.map(() => '?').join(',');
-  const rows = await env.DB.prepare(`SELECT * FROM submissions WHERE id IN (${placeholders})`).bind(...ids).all<SubmissionRow>();
-  const extras = await env.DB.prepare(`SELECT * FROM submission_media WHERE submission_id IN (${placeholders})`).bind(...ids).all<SubmissionMediaRow>();
-  const songs = await env.DB.prepare(`SELECT * FROM company_songs WHERE owner_submission_id IN (${placeholders})`).bind(...ids).all<CompanySongRow>();
+  const requestedPlaceholders = ids.map(() => '?').join(',');
+  const rows = session.role === 'company'
+    ? await env.DB.prepare(`SELECT * FROM submissions WHERE id IN (${requestedPlaceholders}) AND company = ?`).bind(...ids, session.company).all<SubmissionRow>()
+    : await env.DB.prepare(`SELECT * FROM submissions WHERE id IN (${requestedPlaceholders})`).bind(...ids).all<SubmissionRow>();
+  const allowedIds = rows.results.map((row) => row.id);
+  if (!allowedIds.length) return json({ error: '没有可删除的投稿' }, 404);
+  const placeholders = allowedIds.map(() => '?').join(',');
+  const extras = await env.DB.prepare(`SELECT * FROM submission_media WHERE submission_id IN (${placeholders})`).bind(...allowedIds).all<SubmissionMediaRow>();
+  const songs = await env.DB.prepare(`SELECT * FROM company_songs WHERE owner_submission_id IN (${placeholders})`).bind(...allowedIds).all<CompanySongRow>();
   const statements = [
-    env.DB.prepare(`DELETE FROM company_songs WHERE owner_submission_id IN (${placeholders})`).bind(...ids),
-    env.DB.prepare(`DELETE FROM submission_media WHERE submission_id IN (${placeholders})`).bind(...ids),
+    env.DB.prepare(`DELETE FROM company_songs WHERE owner_submission_id IN (${placeholders})`).bind(...allowedIds),
+    env.DB.prepare(`DELETE FROM submission_media WHERE submission_id IN (${placeholders})`).bind(...allowedIds),
     ...rows.results.map((row) => env.DB.prepare('DELETE FROM submissions WHERE id = ?').bind(row.id)),
   ];
   if (statements.length) await env.DB.batch(statements);
@@ -471,23 +567,28 @@ async function deleteAdminSubmissions(env: AppEnv, request: Request) {
 async function editAdminSubmission(env: AppEnv, request: Request, id: string) {
   const denied = await requireAdmin(env, request);
   if (denied) return denied;
+  const session = (await getAdminSession(env, request))!;
   await ensureSchema(env);
   const body = await request.json().catch(() => ({})) as { company?: string; title?: string; description?: string };
-  const company = (body.company || '').trim();
+  const company = session.role === 'company' ? session.company : (body.company || '').trim();
   if (!validCompany(company)) return json({ error: '连队无效' }, 400);
   const title = (body.title || '').trim().slice(0, 60);
   const description = (body.description || '').trim().slice(0, 300);
   const updatedAt = new Date().toISOString();
-  const result = await env.DB.prepare('UPDATE submissions SET company = ?, title = ?, description = ?, updated_at = ? WHERE id = ?')
-    .bind(company, title, description, updatedAt, id).run();
+  const result = session.role === 'company'
+    ? await env.DB.prepare('UPDATE submissions SET title = ?, description = ?, updated_at = ? WHERE id = ? AND company = ?').bind(title, description, updatedAt, id, company).run()
+    : await env.DB.prepare('UPDATE submissions SET company = ?, title = ?, description = ?, updated_at = ? WHERE id = ?').bind(company, title, description, updatedAt, id).run();
   return result.meta.changes ? json({ ok: true, updatedAt }) : json({ error: '投稿不存在' }, 404);
 }
 
 async function deleteAdminSubmission(env: AppEnv, request: Request, id: string) {
   const denied = await requireAdmin(env, request);
   if (denied) return denied;
+  const session = (await getAdminSession(env, request))!;
   await ensureSchema(env);
-  const row = await env.DB.prepare('SELECT * FROM submissions WHERE id = ?').bind(id).first<SubmissionRow>();
+  const row = session.role === 'company'
+    ? await env.DB.prepare('SELECT * FROM submissions WHERE id = ? AND company = ?').bind(id, session.company).first<SubmissionRow>()
+    : await env.DB.prepare('SELECT * FROM submissions WHERE id = ?').bind(id).first<SubmissionRow>();
   if (!row) return json({ error: '投稿不存在' }, 404);
   const extras = await extraMedia(env, id);
   const song = await env.DB.prepare('SELECT * FROM company_songs WHERE owner_submission_id = ?').bind(id).first<CompanySongRow>();
@@ -504,8 +605,9 @@ async function deleteAdminSubmission(env: AppEnv, request: Request, id: string) 
 async function exportAdminSubmissions(env: AppEnv, request: Request) {
   const denied = await requireAdmin(env, request);
   if (denied) return denied;
+  const session = (await getAdminSession(env, request))!;
   await ensureSchema(env);
-  const company = new URL(request.url).searchParams.get('company') || '';
+  const company = session.role === 'company' ? session.company : new URL(request.url).searchParams.get('company') || '';
   const query = company
     ? env.DB.prepare('SELECT * FROM submissions WHERE company = ? ORDER BY created_at').bind(company)
     : env.DB.prepare('SELECT * FROM submissions ORDER BY company, created_at');
@@ -626,16 +728,21 @@ export const onRequest: PagesFunction<AppEnv> = async ({ request, env }) => {
       }
       case 'admin-login': {
         if (request.method !== 'POST') return notAllowed('POST');
-        const body = await request.json().catch(() => ({})) as { username?: string; password?: string };
-        if (!validAdminLogin(env, body.username || '', body.password || '')) return json({ error: '账号或密码错误' }, 401);
-        return json({ ok: true }, 200, { 'Set-Cookie': await createAdminCookie(env, request) });
+        return loginAdmin(env, request);
       }
       case 'admin-logout':
         return request.method === 'POST' ? json({ ok: true }, 200, { 'Set-Cookie': clearAdminCookie() }) : notAllowed('POST');
       case 'admin-session': {
         if (request.method !== 'GET') return notAllowed('GET');
-        return (await isAdmin(env, request)) ? json({ authenticated: true }) : json({ authenticated: false }, 401);
+        const session = await getAdminSession(env, request);
+        return session ? json({ authenticated: true, role: session.role, company: session.company }) : json({ authenticated: false }, 401);
       }
+      case 'admin-company-admins':
+        return request.method === 'GET' ? listCompanyAdmins(env, request) : notAllowed('GET');
+      case 'admin-company-admin-reset':
+        return request.method === 'POST' ? resetCompanyAdmin(env, request, route.value) : notAllowed('POST');
+      case 'admin-song':
+        return manageCompanySong(env, request);
       case 'admin-submissions':
         if (request.method === 'GET') return listAdminSubmissions(env, request);
         return request.method === 'DELETE' ? deleteAdminSubmissions(env, request) : notAllowed('GET', 'DELETE');
@@ -646,8 +753,9 @@ export const onRequest: PagesFunction<AppEnv> = async ({ request, env }) => {
         if (request.method !== 'GET') return notAllowed('GET');
         const denied = await requireAdmin(env, request);
         if (denied) return denied;
+        const session = (await getAdminSession(env, request))!;
         await ensureSchema(env);
-        const row = await galleryMedia(env, route.value);
+        const row = await adminGalleryMedia(env, route.value, session.role === 'company' ? session.company : '');
         return mediaResponse(env, row, 'private, max-age=60');
       }
       case 'admin-export':

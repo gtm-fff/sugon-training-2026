@@ -4,7 +4,7 @@ import AdminPage from '../app/admin/page';
 import Home from '../app/page';
 import '../app/globals.css';
 
-const Page = window.location.pathname.startsWith('/admin') ? AdminPage : Home;
+const Page = window.location.pathname.startsWith('/admin') || window.location.pathname.startsWith('/company-admin') ? AdminPage : Home;
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

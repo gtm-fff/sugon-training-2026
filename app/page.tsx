@@ -16,7 +16,6 @@ const MAX_DISPLAY_IMAGE_SIZE = 2 * 1024 * 1024;
 const MAX_THUMBNAIL_SIZE = 1024 * 1024;
 const SHARE_URL = 'https://sugon-training-2026.pages.dev';
 const BROWSER_CREDENTIAL_KEY = 'sugon-training-upload-code';
-const AUDIO_TYPES = ['audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/x-m4a', 'audio/aac', 'audio/wav', 'audio/x-wav', 'audio/wave'];
 const VISUAL_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif', 'image/bmp', 'video/mp4', 'video/quicktime', 'video/webm'];
 const MEMORY_EFFECTS = ['memory-fade', 'memory-zoom-in', 'memory-zoom-out', 'memory-pan-left', 'memory-pan-right'];
 
@@ -227,12 +226,9 @@ async function createImageVariants(file: File) {
 }
 
 async function appendMedia(data: FormData, files: File[]) {
-  const visualFiles = files.filter((file) => !file.type.startsWith('audio/'));
-  const song = files.find((file) => file.type.startsWith('audio/'));
-  if (visualFiles.length) data.set('media_count', String(visualFiles.length));
-  if (song) data.set('song', song);
-  for (let index = 0; index < visualFiles.length; index += 1) {
-    const file = visualFiles[index];
+  data.set('media_count', String(files.length));
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
     data.set(`image_${index}`, file);
     const variants = await createImageVariants(file);
     if (variants?.display) data.set(`display_${index}`, variants.display);
@@ -264,16 +260,14 @@ function MediaPicker({ files, onChange, currentMedia = [] }: {
   return (
     <div className="media-picker">
       <label className={`dropzone ${visibleMedia.length ? 'has-preview' : ''}`}>
-        {visibleMedia.length ? <span className="media-preview-grid">{visibleMedia.map((item) => item.mediaType.startsWith('audio/')
-          ? <span className="audio-preview" key={item.id}>♫<small>{item.imageName}</small></span>
-          : item.mediaType.startsWith('video/')
+        {visibleMedia.length ? <span className="media-preview-grid">{visibleMedia.map((item) => item.mediaType.startsWith('video/')
             ? <video key={item.id} src={item.url} aria-label={item.imageName} muted playsInline preload="metadata" />
             : <img key={item.id} src={item.url} alt={item.imageName} />)}</span> : <span className="dropzone-mark">＋</span>}
         <span className="dropzone-copy">
-          <strong>{files.length ? `已选择 ${files.length} 份素材` : currentMedia.length ? '点击替换素材或队歌' : '选择图片、视频或一首队歌'}</strong>
-          <small>{files.length ? `${formatBytes(files.reduce((sum, file) => sum + file.size, 0))} · 合计` : '最多 9 张图片 / 1 个视频 / 1 首音频；合计不超过 25MB'}</small>
+          <strong>{files.length ? `已选择 ${files.length} 份素材` : currentMedia.length ? '点击替换照片或视频' : '选择图片或视频'}</strong>
+          <small>{files.length ? `${formatBytes(files.reduce((sum, file) => sum + file.size, 0))} · 合计` : '最多 9 张图片或 1 个视频；合计不超过 25MB'}</small>
         </span>
-        <input ref={inputRef} type="file" multiple accept="image/jpeg,image/png,image/webp,image/gif,image/avif,image/bmp,video/mp4,video/quicktime,video/webm,audio/mpeg,audio/mp3,audio/mp4,audio/x-m4a,audio/aac,audio/wav,audio/x-wav,audio/wave,.mp3,.m4a,.aac,.wav" onChange={pick} />
+        <input ref={inputRef} type="file" multiple accept="image/jpeg,image/png,image/webp,image/gif,image/avif,image/bmp,video/mp4,video/quicktime,video/webm" onChange={pick} />
       </label>
       {files.length > 0 && <div className="selected-media-list">{files.map((file, index) => <button type="button" key={`${file.name}-${file.lastModified}`} onClick={() => onChange(files.filter((_, itemIndex) => itemIndex !== index))}>移除 {file.name}</button>)}</div>}
     </div>
@@ -373,14 +367,11 @@ export default function Home() {
   }
 
   function validateMedia(selectedFiles: File[], required = true) {
-    const visualFiles = selectedFiles.filter((file) => !file.type.startsWith('audio/'));
-    const audioFiles = selectedFiles.filter((file) => file.type.startsWith('audio/'));
-    if (!selectedFiles.length && required) return '请选择照片、视频或音频';
-    if (visualFiles.length > 9) return '一次最多上传 9 张图片';
-    if (audioFiles.length > 1) return '每次只能上传一首队歌';
+    if (!selectedFiles.length && required) return '请选择照片或视频';
+    if (selectedFiles.length > 9) return '一次最多上传 9 张图片';
     if (selectedFiles.reduce((sum, file) => sum + file.size, 0) > MAX_FILE_SIZE) return '本次上传文件总大小超过 25MB';
-    if (visualFiles.some((file) => !VISUAL_TYPES.includes(file.type)) || audioFiles.some((file) => !AUDIO_TYPES.includes(file.type))) return '只支持常见图片、MP4/MOV/WebM、MP3/M4A/AAC/WAV';
-    if (visualFiles.some((file) => file.type.startsWith('video/')) && visualFiles.length > 1) return '视频不能与图片混传，但可以同时设置一首队歌';
+    if (selectedFiles.some((file) => !VISUAL_TYPES.includes(file.type))) return '只支持常见图片、MP4、MOV 或 WebM';
+    if (selectedFiles.some((file) => file.type.startsWith('video/')) && selectedFiles.length > 1) return '视频需要单独上传，不能与图片混传';
     return '';
   }
 
@@ -574,7 +565,7 @@ export default function Home() {
         <div className="hero-copy">
           <p className="eyebrow"><span /> SUGON GRADUATE TRAINING 2026</p>
           <h1>荣聚曙光<br /><span>梦想起航</span></h1>
-          <p className="hero-intro">记录新曙光人的成长时刻。无需注册，上传码会固定在当前浏览器；照片、视频和队歌都能持续追加。</p>
+          <p className="hero-intro">记录新曙光人的成长时刻。无需注册，上传码会固定在当前浏览器；照片和视频都能持续追加。</p>
           <div className="hero-actions">
             <a href="#gallery">浏览连队风采</a>
             <button type="button" onClick={() => openWorkspace('upload')}>上传我的瞬间&nbsp; →</button>
@@ -629,7 +620,7 @@ export default function Home() {
           <div className="upload-launch-copy">
             <p>UPLOAD & MANAGE</p>
             <h2>留下你的集训瞬间</h2>
-            <span>上传照片、视频或队歌；同一浏览器会持续追加到同一投稿。</span>
+            <span>上传照片或视频；同一浏览器会持续追加到同一投稿。</span>
           </div>
           <div className="upload-launch-actions">
             <button className="launch-primary" onClick={() => openWorkspace('upload')}>上传素材 <span>→</span></button>
@@ -681,12 +672,6 @@ export default function Home() {
                   mediaType: item.mediaType,
                   imageName: item.imageName,
                 })),
-                ...(submission.song ? [{
-                  id: 'song',
-                  url: `/api/submissions/${encodeURIComponent(credential)}/image?song=1&v=${submission.song.updatedAt}`,
-                  mediaType: submission.song.mediaType,
-                  imageName: `队歌：${submission.song.name}`,
-                }] : []),
               ]} />
               {message && <p className={`form-message ${message.includes('保存') ? 'success' : 'error'}`}>{message}</p>}
               <div className="button-row"><button type="button" className="text-button" onClick={clearBrowserBinding}>解除并换码</button><button className="primary-button" disabled={busy}>{busy ? '正在保存…' : '保存修改'}<span>→</span></button></div>
@@ -704,7 +689,7 @@ export default function Home() {
       </section>
       )}
 
-      <footer><span>© 2026 中科曙光应届生集训项目 · 荣聚曙光，梦想起航</span><a href="/admin">管理员入口</a></footer>
+      <footer><span>© 2026 中科曙光应届生集训项目 · 荣聚曙光，梦想起航</span><span className="footer-modes"><a href="#upload">匿名投稿</a><a href="/company-admin">连队管理员</a><a href="/admin">系统管理员</a></span></footer>
 
       <dialog ref={successRef} className="success-dialog" aria-labelledby="success-title" onClose={() => setCreatedCredential('')}>
           <div className="success-card">

@@ -123,9 +123,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .media-picker { display: grid; gap: 8px; }
 .remove-media { justify-self: end; padding: 0; color: var(--red); background: none; border: 0; cursor: pointer; font-size: 11px; font-weight: 800; }
 .media-preview-grid { display: grid; grid-template-columns: repeat(3, 58px); gap: 4px; }
-.media-preview-grid img, .media-preview-grid video, .audio-preview { width: 58px; height: 54px; }
-.audio-preview { display: grid; place-items: center; align-content: center; gap: 2px; overflow: hidden; color: white; background: linear-gradient(145deg, var(--red), var(--blue)); font-size: 18px; }
-.audio-preview small { width: 50px; overflow: hidden; font-size: 7px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.media-preview-grid img, .media-preview-grid video { width: 58px; height: 54px; }
 .selected-media-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .selected-media-list button { max-width: 100%; padding: 6px 9px; overflow: hidden; cursor: pointer; color: var(--red); background: transparent; border: 1px solid rgba(200,30,42,.25); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .dropzone-mark { display: grid; place-items: center; width: 74px; height: 74px; color: var(--red); background: white; border: 1px solid var(--line); font-size: 28px; font-weight: 200; }
@@ -212,6 +210,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 footer { position: relative; z-index: 1; display: flex; justify-content: space-between; max-width: 1160px; margin: auto; padding: 28px 0 40px; color: #777069; border-top: 1px solid var(--line); font-size: 11px; }
 footer a { color: inherit; text-decoration: none; }
 footer a:hover { color: var(--red); }
+.footer-modes { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px 16px; }
 
 .modal-backdrop { position: fixed; z-index: 20; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(18,15,13,.76); backdrop-filter: blur(7px); }
 .success-dialog { width: min(500px, calc(100vw - 40px)); padding: 0; overflow: visible; background: transparent; border: 0; }
@@ -283,7 +282,8 @@ footer a:hover { color: var(--red); }
   .company-album-media { aspect-ratio: 16 / 10; }
   .memory-controls { align-items: stretch; flex-direction: column; }
   .memory-controls small { text-align: left; }
-  footer { margin: 0 20px; }
+  footer { display: grid; gap: 14px; margin: 0 20px; }
+  .footer-modes { justify-content: flex-start; }
   .success-card { padding: 30px; box-shadow: 9px 9px 0 var(--red); }
 }
 
@@ -313,6 +313,7 @@ footer a:hover { color: var(--red); }
 .admin-login-card input, .admin-edit-card input, .admin-edit-card select { height: 47px; padding: 0 13px; }
 .admin-edit-card textarea { min-height: 110px; padding: 12px; resize: vertical; }
 .admin-login-card input:focus, .admin-edit-card input:focus, .admin-edit-card textarea:focus, .admin-edit-card select:focus { border-color: var(--red); }
+.admin-mode-switch { display: block; margin-top: 20px; color: var(--muted); font-size: 11px; text-align: center; }
 .admin-primary { display: flex; align-items: center; justify-content: space-between; min-height: 49px; padding: 0 16px; color: white; background: var(--red); border: 0; cursor: pointer; font-size: 12px; font-weight: 850; }
 .admin-primary:hover { background: var(--red-dark); }
 .admin-primary:disabled { opacity: .6; cursor: wait; }
@@ -377,12 +378,29 @@ footer a:hover { color: var(--red); }
 .empty-state p { color: var(--muted); font-size: 11px; }
 .load-more { display: block; min-width: 220px; height: 44px; margin: 24px auto 0; color: var(--ink); background: transparent; border: 1px solid var(--line); cursor: pointer; font-size: 11px; font-weight: 800; }
 .load-more:hover { color: white; background: var(--ink); }
+.song-manager { display: grid; grid-template-columns: 150px minmax(180px, 1fr) minmax(260px, 1.5fr) auto; align-items: center; gap: 12px; padding-top: 22px; }
+.song-manager > select, .song-manager input { width: 100%; min-height: 42px; padding: 8px 10px; color: var(--ink); background: #f6f2eb; border: 1px solid #d0c8bd; font-size: 10px; }
+.song-manager form { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.song-current { display: grid; gap: 5px; min-width: 0; }
+.song-current b { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.song-current small { color: var(--muted); font-size: 9px; }
+.company-admin-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding-top: 22px; }
+.company-admin-grid article { display: grid; gap: 9px; padding: 15px; background: #f4f0e8; border: 1px solid var(--line); }
+.company-admin-grid span { color: var(--red); font-size: 10px; font-weight: 850; }
+.company-admin-grid code { font-size: 12px; }
+.company-admin-grid button { min-height: 32px; cursor: pointer; color: var(--ink); background: transparent; border: 1px solid #bcb3a7; font-size: 9px; }
+.admin-credential { display: grid; gap: 7px; padding: 16px; color: #285b42; background: #eaf6ee; border-left: 3px solid #2f8d5e; }
+.admin-credential b, .admin-credential small { font-size: 10px; }
+.admin-credential code { font-size: 14px; font-weight: 800; }
 .admin-edit-card { position: relative; width: min(100%, 500px); padding: 38px; background: var(--cream); }
 .admin-edit-card h2 { margin: -8px 0 4px; font-size: 28px; }
 .modal-close { position: absolute; right: 16px; top: 13px; color: var(--muted); background: transparent; border: 0; cursor: pointer; font-size: 25px; }
 
 @media (max-width: 1050px) {
   .submission-grid { grid-template-columns: repeat(2, 1fr); }
+  .company-admin-grid { grid-template-columns: repeat(2, 1fr); }
+  .song-manager { grid-template-columns: 130px 1fr; }
+  .song-manager form { grid-column: 1 / -1; }
 }
 
 @media (max-width: 760px) {
@@ -399,4 +417,7 @@ footer a:hover { color: var(--red); }
   .submission-grid { grid-template-columns: 1fr; }
   .admin-toolbar { align-items: stretch; flex-direction: column; }
   .toolbar-actions { justify-content: flex-end; }
+  .song-manager, .song-manager form { grid-template-columns: 1fr; }
+  .song-manager form { grid-column: auto; }
+  .company-admin-grid { grid-template-columns: 1fr; }
 }
