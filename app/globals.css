@@ -192,6 +192,16 @@ footer a:hover { color: var(--red); }
 .credential-card { display: grid; width: 100%; gap: 8px; margin: 25px 0 18px; padding: 20px; color: var(--ink); background: #eee8dc; border: 1px dashed #a99f92; cursor: pointer; }
 .credential-card code { font-size: clamp(18px, 5vw, 25px); font-weight: 900; letter-spacing: .08em; }
 .credential-card small { color: var(--red); font-size: 10px; font-weight: 800; }
+.share-dialog { width: min(460px, calc(100vw - 40px)); }
+.share-card { text-align: center; }
+.share-card .eyebrow { justify-content: center; margin-bottom: 12px; }
+.share-card h2 { margin-bottom: 0; }
+.share-card img { display: block; width: min(100%, 280px); height: auto; margin: 18px auto 14px; padding: 10px; background: white; border: 1px solid var(--line); image-rendering: pixelated; }
+.share-card code { display: block; padding: 10px; overflow-wrap: anywhere; color: var(--muted); background: #eee8dc; font-size: 11px; }
+.share-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+.share-actions button { min-height: 44px; cursor: pointer; color: var(--ink); background: transparent; border: 1px solid var(--line); font-size: 11px; font-weight: 850; }
+.share-actions button:last-child { color: white; background: var(--red); border-color: var(--red); }
+.share-note { min-height: 18px; margin: 12px 0 0; color: var(--muted); font-size: 10px; line-height: 1.7; }
 
 @media (max-width: 900px) {
   .hero { grid-template-columns: 1fr; min-height: auto; padding-bottom: 90px; }
@@ -211,7 +221,9 @@ footer a:hover { color: var(--red); }
   .hero { padding: 60px 22px 75px; }
   .hero h1 { font-size: 47px; }
   .hero-intro { font-size: 15px; }
-  .hero-actions a, .hero-actions button { flex: 1; padding-inline: 10px; }
+  .hero-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .hero-actions a, .hero-actions button { padding-inline: 10px; }
+  .hero-actions button:last-child { grid-column: 1 / -1; }
   .hero-facts { gap: 15px; justify-content: space-between; }
   .hero-facts strong { font-size: 21px; }
   .workspace { display: block; margin: 0 12px 70px; }

@@ -12,6 +12,7 @@ const COMPANY_ALBUMS = COMPANIES.map((name, index) => ({
   demoUrl: `/company-demo/${String(index + 1).padStart(2, '0')}.webp`,
 }));
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const SHARE_URL = 'https://sugon-training-2026.pages.dev';
 
 type Submission = {
   id: string;
@@ -174,8 +175,10 @@ export default function Home() {
   const [message, setMessage] = useState('');
   const [createdCredential, setCreatedCredential] = useState('');
   const [copyMessage, setCopyMessage] = useState('点击复制上传码');
+  const [shareMessage, setShareMessage] = useState('');
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([]);
   const successRef = useRef<HTMLDialogElement>(null);
+  const shareRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
     fetch('/api/gallery')
@@ -322,6 +325,34 @@ export default function Home() {
     document.getElementById('upload')?.scrollIntoView({ block: 'start' });
   }
 
+  function openShare() {
+    setShareMessage('');
+    shareRef.current?.showModal();
+  }
+
+  async function copyShareLink() {
+    try {
+      await navigator.clipboard.writeText(SHARE_URL);
+      setShareMessage('链接已复制');
+    } catch {
+      setShareMessage('复制失败，请手动选择链接');
+    }
+  }
+
+  async function sharePage() {
+    if (!navigator.share) return setShareMessage('当前浏览器不支持系统分享，请复制链接');
+    try {
+      await navigator.share({
+        title: '中科曙光｜2026 届应届生集训宣传平台',
+        text: '记录 2026 届新曙光人的成长、协作与青春时刻。',
+        url: SHARE_URL,
+      });
+      setShareMessage('分享完成');
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) setShareMessage('分享未完成，请复制链接');
+    }
+  }
+
   return (
     <main className="site-shell">
       <nav className="topbar">
@@ -340,6 +371,7 @@ export default function Home() {
           <div className="hero-actions">
             <a href="#gallery">浏览连队风采</a>
             <button type="button" onClick={() => openWorkspace('upload')}>上传我的瞬间&nbsp; →</button>
+            <button type="button" onClick={openShare}>分享页面</button>
           </div>
           <div className="hero-facts">
             <span><strong>16</strong> 青春连队</span>
@@ -448,6 +480,21 @@ export default function Home() {
             <button className="credential-card" onClick={copyCredential}><code>{createdCredential}</code><small>{copyMessage}</small></button>
             <button className="primary-button" onClick={viewCreatedSubmission}>现在查看投稿 <span>→</span></button>
           </div>
+      </dialog>
+
+      <dialog ref={shareRef} className="success-dialog share-dialog" aria-labelledby="share-title" onClose={() => setShareMessage('')}>
+        <div className="success-card share-card">
+          <button type="button" className="success-close" onClick={() => shareRef.current?.close()} aria-label="关闭分享窗口">×</button>
+          <p className="eyebrow">SHARE THIS PAGE</p>
+          <h2 id="share-title">扫码查看集训风采</h2>
+          <img src="/share-qr.png" alt="中科曙光 2026 届应届生集训宣传平台二维码" width="512" height="512" />
+          <code>{SHARE_URL}</code>
+          <div className="share-actions">
+            <button type="button" onClick={copyShareLink}>复制链接</button>
+            <button type="button" onClick={sharePage}>系统分享 / 微信</button>
+          </div>
+          <p className="share-note" role="status">{shareMessage || '若系统分享面板中有微信，可直接选择；也可长按识别二维码。'}</p>
+        </div>
       </dialog>
     </main>
   );
