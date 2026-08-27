@@ -40,7 +40,14 @@ type GalleryItem = {
 
 type CompanyAlbum = (typeof COMPANY_ALBUMS)[number];
 
-function CompanyAlbumCard({ album, items }: { album: CompanyAlbum; items: GalleryItem[] }) {
+function CompanyAlbumCard({ album, items, likes, liked, liking, onLike }: {
+  album: CompanyAlbum;
+  items: GalleryItem[];
+  likes: number;
+  liked: boolean;
+  liking: boolean;
+  onLike: () => void;
+}) {
   const media = items.length ? items.map((item) => ({
     ...item,
     thumbnailUrl: item.mediaType.startsWith('video/') ? '' : `/api/gallery/${item.id}/thumbnail?v=${item.updatedAt}`,
@@ -100,7 +107,12 @@ function CompanyAlbumCard({ album, items }: { album: CompanyAlbum; items: Galler
       </dialog>
       <div className="company-album-copy">
         <div><span>COMPANY {album.number}</span><small>{items.length} 份用户投稿</small></div>
-        <h3>{cover.title || '未填写素材标题'}</h3>
+        <div className="company-album-title-row">
+          <h3>{cover.title || '未填写素材标题'}</h3>
+          <button type="button" className={liked ? 'liked' : ''} disabled={liked || liking} onClick={onLike} aria-pressed={liked} aria-label={`${liked ? '已为' : '给'}${album.name}点赞`}>
+            {liked ? '♥' : '♡'} {likes}
+          </button>
+        </div>
       </div>
     </article>
   );
@@ -208,13 +220,25 @@ export default function Home() {
   const [shareMessage, setShareMessage] = useState('');
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([]);
   const [galleryLoaded, setGalleryLoaded] = useState(false);
+  const [companyLikes, setCompanyLikes] = useState<Record<string, number>>({});
+  const [likedCompanies, setLikedCompanies] = useState<string[]>([]);
+  const [sortMode, setSortMode] = useState<'default' | 'popular'>('default');
+  const [likingCompany, setLikingCompany] = useState('');
+  const [galleryMessage, setGalleryMessage] = useState('');
   const successRef = useRef<HTMLDialogElement>(null);
   const shareRef = useRef<HTMLDialogElement>(null);
+  const displayedAlbums = useMemo(() => sortMode === 'default' ? COMPANY_ALBUMS : [...COMPANY_ALBUMS].sort(
+    (left, right) => (companyLikes[right.name] || 0) - (companyLikes[left.name] || 0) || Number(left.number) - Number(right.number),
+  ), [sortMode, companyLikes]);
 
   useEffect(() => {
     fetch('/api/gallery')
-      .then(async (response) => (await response.json()) as { items?: GalleryItem[] })
-      .then((data) => setGalleryItems(data.items || []))
+      .then(async (response) => (await response.json()) as { items?: GalleryItem[]; likes?: Record<string, number>; likedCompanies?: string[] })
+      .then((data) => {
+        setGalleryItems(data.items || []);
+        setCompanyLikes(data.likes || {});
+        setLikedCompanies(data.likedCompanies || []);
+      })
       .catch(() => setGalleryItems([]))
       .finally(() => setGalleryLoaded(true));
   }, []);
@@ -391,6 +415,27 @@ export default function Home() {
     }
   }
 
+  async function likeCompany(company: string) {
+    setLikingCompany(company);
+    setGalleryMessage('');
+    try {
+      const response = await fetch('/api/gallery/like', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ company }),
+      });
+      const result = await response.json() as { likes?: number; added?: boolean; error?: string };
+      if (!response.ok) throw new Error(result.error || '点赞失败');
+      setCompanyLikes((current) => ({ ...current, [company]: result.likes || 0 }));
+      setLikedCompanies((current) => current.includes(company) ? current : [...current, company]);
+      setGalleryMessage(result.added ? `已为${company}点赞` : `你已经赞过${company}`);
+    } catch (error) {
+      setGalleryMessage(error instanceof Error ? error.message : '点赞失败');
+    } finally {
+      setLikingCompany('');
+    }
+  }
+
   return (
     <main className="site-shell">
       <nav className="topbar">
@@ -431,11 +476,26 @@ export default function Home() {
             <p className="eyebrow"><span /> COMPANY ALBUMS</p>
             <h2 id="gallery-title">十六个连队，十六本相册。</h2>
           </div>
-          <p>真实投稿优先成为相册封面。点击任意连队，即可浏览其中的照片、视频和故事。</p>
+          <div className="gallery-tools">
+            <p>真实投稿优先成为相册封面。点击任意连队，即可浏览其中的照片、视频和故事。</p>
+            <div className="gallery-sort" role="group" aria-label="连队相册排序">
+              <button type="button" className={sortMode === 'default' ? 'active' : ''} onClick={() => setSortMode('default')}>默认排序</button>
+              <button type="button" className={sortMode === 'popular' ? 'active' : ''} onClick={() => setSortMode('popular')}>按人气排序</button>
+            </div>
+            {galleryMessage && <p className="gallery-message" role="status">{galleryMessage}</p>}
+          </div>
         </div>
 
         <div className="company-album-grid">
-          {COMPANY_ALBUMS.map((album) => <CompanyAlbumCard key={album.name} album={album} items={galleryItems.filter((item) => item.company === album.name)} />)}
+          {displayedAlbums.map((album) => <CompanyAlbumCard
+            key={album.name}
+            album={album}
+            items={galleryItems.filter((item) => item.company === album.name)}
+            likes={companyLikes[album.name] || 0}
+            liked={likedCompanies.includes(album.name)}
+            liking={likingCompany === album.name}
+            onLike={() => likeCompany(album.name)}
+          />)}
         </div>
       </section>
 

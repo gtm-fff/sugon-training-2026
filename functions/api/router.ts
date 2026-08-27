@@ -1,11 +1,12 @@
 export type ApiRoute =
-  | { name: 'gallery' | 'submissions' | 'admin-login' | 'admin-logout' | 'admin-session' | 'admin-submissions' | 'admin-export' }
+  | { name: 'gallery' | 'gallery-like' | 'submissions' | 'admin-login' | 'admin-logout' | 'admin-session' | 'admin-submissions' | 'admin-export' }
   | { name: 'gallery-media' | 'gallery-thumbnail' | 'submission' | 'submission-media' | 'admin-submission' | 'admin-submission-media'; value: string };
 
 export function matchRoute(pathname: string): ApiRoute | null {
   const parts = pathname.replace(/^\/api\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
   const path = parts.join('/');
   if (path === 'gallery') return { name: 'gallery' };
+  if (path === 'gallery/like') return { name: 'gallery-like' };
   if (path === 'submissions') return { name: 'submissions' };
   if (path === 'admin/login') return { name: 'admin-login' };
   if (path === 'admin/logout') return { name: 'admin-logout' };

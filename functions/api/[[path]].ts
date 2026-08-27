@@ -26,6 +26,7 @@ import { matchRoute } from './router';
 
 const MAX_THUMBNAIL_SIZE = 1024 * 1024;
 const MAX_DISPLAY_IMAGE_SIZE = 2 * 1024 * 1024;
+const VOTER_COOKIE = 'sugon_voter';
 
 function notAllowed(...methods: string[]) {
   return new Response('Method not allowed', { status: 405, headers: { Allow: methods.join(', ') } });
@@ -37,6 +38,16 @@ function csvCell(value: unknown) {
 
 function safeName(value: string) {
   return value.replace(/[\\/:*?"<>|]/g, '_').slice(0, 100) || 'image';
+}
+
+function voterId(request: Request) {
+  const prefix = `${VOTER_COOKIE}=`;
+  return request.headers.get('cookie')?.split(';').map((item) => item.trim()).find((item) => item.startsWith(prefix))?.slice(prefix.length, prefix.length + 100) || '';
+}
+
+function voterCookie(request: Request, value: string) {
+  const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
+  return `${VOTER_COOKIE}=${value}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax${secure}`;
 }
 
 function publicRows(rows: SubmissionRow[]) {
@@ -217,6 +228,36 @@ async function updateSubmission(env: AppEnv, request: Request, credential: strin
   return json(publicSubmission(updated!));
 }
 
+async function galleryPopularity(env: AppEnv, request: Request) {
+  const counts = await env.DB.prepare('SELECT company, COUNT(*) AS likes FROM company_votes GROUP BY company').all<{ company: string; likes: number }>();
+  const voter = voterId(request);
+  const liked = voter
+    ? (await env.DB.prepare('SELECT company FROM company_votes WHERE voter_hash = ?').bind(await sha256(voter)).all<{ company: string }>()).results.map((row) => row.company)
+    : [];
+  return {
+    likes: Object.fromEntries(counts.results.map((row) => [row.company, row.likes])),
+    likedCompanies: liked,
+  };
+}
+
+async function likeCompany(env: AppEnv, request: Request) {
+  await ensureSchema(env);
+  const body = await request.json().catch(() => ({})) as { company?: string };
+  const company = (body.company || '').trim();
+  if (!validCompany(company)) return json({ error: '连队无效' }, 400);
+
+  const existingVoter = voterId(request);
+  const voter = existingVoter || crypto.randomUUID();
+  const result = await env.DB.prepare('INSERT OR IGNORE INTO company_votes (company, voter_hash, created_at) VALUES (?, ?, ?)')
+    .bind(company, await sha256(voter), new Date().toISOString()).run();
+  const count = await env.DB.prepare('SELECT COUNT(*) AS likes FROM company_votes WHERE company = ?').bind(company).first<{ likes: number }>();
+  return json(
+    { company, likes: count?.likes || 0, liked: true, added: result.meta.changes > 0 },
+    200,
+    existingVoter ? undefined : { 'Set-Cookie': voterCookie(request, voter) },
+  );
+}
+
 async function listAdminSubmissions(env: AppEnv, request: Request) {
   const denied = await requireAdmin(env, request);
   if (denied) return denied;
@@ -326,16 +367,22 @@ export const onRequest: PagesFunction<AppEnv> = async ({ request, env }) => {
         if (request.method !== 'GET') return notAllowed('GET');
         await ensureSchema(env);
         const result = await env.DB.prepare('SELECT * FROM submissions ORDER BY created_at DESC').all<SubmissionRow>();
-        return json({ items: result.results.map((row) => ({
-          id: row.id,
-          company: row.company,
-          title: row.title,
-          description: row.description,
-          mediaType: row.image_type,
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-        })) });
+        const popularity = await galleryPopularity(env, request);
+        return json({
+          items: result.results.map((row) => ({
+            id: row.id,
+            company: row.company,
+            title: row.title,
+            description: row.description,
+            mediaType: row.image_type,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+          })),
+          ...popularity,
+        });
       }
+      case 'gallery-like':
+        return request.method === 'POST' ? likeCompany(env, request) : notAllowed('POST');
       case 'gallery-media': {
         if (request.method !== 'GET') return notAllowed('GET');
         await ensureSchema(env);

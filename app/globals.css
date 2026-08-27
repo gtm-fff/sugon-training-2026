@@ -143,7 +143,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .gallery-heading { display: grid; grid-template-columns: 1.2fr .8fr; align-items: end; gap: 50px; margin-bottom: 30px; }
 .gallery-heading .eyebrow { margin-bottom: 15px; }
 .gallery-heading h2 { max-width: 680px; margin: 0; font-size: clamp(34px, 5vw, 56px); line-height: 1.12; letter-spacing: -.055em; }
-.gallery-heading > p { margin: 0 0 7px; color: var(--muted); font-size: 13px; line-height: 1.8; }
+.gallery-tools > p:first-child { margin: 0 0 14px; color: var(--muted); font-size: 13px; line-height: 1.8; }
+.gallery-sort { display: flex; gap: 8px; }
+.gallery-sort button { height: 36px; padding: 0 13px; cursor: pointer; color: var(--muted); background: transparent; border: 1px solid var(--line); font-size: 10px; font-weight: 800; }
+.gallery-sort button.active { color: white; background: var(--ink); border-color: var(--ink); }
+.gallery-message { min-height: 17px; margin: 8px 0 0; color: var(--red); font-size: 10px; }
 .company-album-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 .company-album-card { min-width: 0; background: var(--cream); border: 1px solid var(--line); box-shadow: 0 12px 30px rgba(41,32,24,.06); overflow: hidden; transition: transform .2s, box-shadow .2s; }
 .company-album-card:hover { transform: translateY(-2px); box-shadow: 0 20px 45px rgba(41,32,24,.11); }
@@ -163,7 +167,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .company-album-copy > div:first-child { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
 .company-album-copy > div:first-child span { color: var(--red); font: 800 9px ui-monospace, monospace; letter-spacing: .1em; }
 .company-album-copy > div:first-child small { color: var(--muted); font-size: 9px; }
+.company-album-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .company-album-copy h3 { margin: 0; overflow: hidden; font-size: 17px; letter-spacing: -.035em; text-overflow: ellipsis; white-space: nowrap; }
+.company-album-title-row h3 { min-width: 0; }
+.company-album-title-row button { flex: 0 0 auto; height: 30px; min-width: 52px; padding: 0 9px; cursor: pointer; color: var(--red); background: transparent; border: 1px solid rgba(200,30,42,.3); font-size: 11px; font-weight: 850; }
+.company-album-title-row button.liked { color: white; background: var(--red); border-color: var(--red); }
+.company-album-title-row button:disabled { cursor: default; opacity: 1; }
 .image-lightbox { width: min(1120px, 94vw); max-height: 94vh; padding: 0; overflow: hidden; color: white; background: #111; border: 0; }
 .image-lightbox::backdrop { background: rgba(12,10,9,.9); backdrop-filter: blur(8px); }
 .image-lightbox-media { position: relative; display: grid; place-items: center; min-height: min(68vh, 720px); background: #080808; }
@@ -246,7 +255,7 @@ footer a:hover { color: var(--red); }
   .gallery-section { margin: 0 12px 70px; }
   .gallery-heading { display: block; padding: 0 10px; }
   .gallery-heading h2 { font-size: 38px; }
-  .gallery-heading > p { margin-top: 18px; }
+  .gallery-tools { margin-top: 18px; }
   .company-album-grid { grid-template-columns: 1fr; gap: 14px; }
   .company-album-media { aspect-ratio: 16 / 10; }
   footer { margin: 0 20px; }
