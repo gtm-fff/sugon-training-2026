@@ -15,6 +15,7 @@ type Submission = {
   imageName: string;
   mediaType: string;
   imageSize: number;
+  mediaCount?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -199,7 +200,7 @@ export default function AdminPage() {
                     <span className="company-chip">{item.company}</span>
                     <h3>{item.title || '未填写标题'}</h3>
                     <p>{item.description || '没有文字说明'}</p>
-                    <small>{size(item.imageSize)} · {new Date(item.createdAt).toLocaleDateString('zh-CN')}</small>
+                    <small>{item.mediaCount || 1} 份素材 · {size(item.imageSize)} · {new Date(item.createdAt).toLocaleDateString('zh-CN')}</small>
                     <div><button onClick={() => setEditing({ ...item })}>编辑</button><button className="danger-text" onClick={() => deleteItems([item.id])}>删除</button></div>
                   </div>
                 </article>

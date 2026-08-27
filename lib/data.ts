@@ -50,6 +50,18 @@ export async function ensureSchema(env: AppEnv) {
       updated_at TEXT NOT NULL
     )`),
     db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_submissions_credential_hash ON submissions(credential_hash)'),
+    db.prepare(`CREATE TABLE IF NOT EXISTS submission_media (
+      id TEXT PRIMARY KEY,
+      submission_id TEXT NOT NULL,
+      image_key TEXT NOT NULL,
+      image_name TEXT NOT NULL,
+      image_type TEXT NOT NULL,
+      image_size INTEGER NOT NULL CHECK(image_size <= 26214400),
+      position INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE (submission_id, position)
+    )`),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_submission_media_submission ON submission_media(submission_id)'),
     db.prepare(`CREATE TABLE IF NOT EXISTS company_votes (
       company TEXT NOT NULL,
       voter_hash TEXT NOT NULL,

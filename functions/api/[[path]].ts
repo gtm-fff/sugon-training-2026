@@ -26,7 +26,22 @@ import { matchRoute } from './router';
 
 const MAX_THUMBNAIL_SIZE = 1024 * 1024;
 const MAX_DISPLAY_IMAGE_SIZE = 2 * 1024 * 1024;
+const MAX_MEDIA_COUNT = 9;
 const VOTER_COOKIE = 'sugon_voter';
+
+type SubmissionMediaRow = {
+  id: string;
+  submission_id: string;
+  image_key: string;
+  image_name: string;
+  image_type: string;
+  image_size: number;
+  position: number;
+  created_at: string;
+};
+
+type UploadMedia = { image: File; display: File | null; thumbnail: File | null };
+type StoredMedia = UploadMedia & { id: string; imageKey: string; position: number };
 
 function notAllowed(...methods: string[]) {
   return new Response('Method not allowed', { status: 405, headers: { Allow: methods.join(', ') } });
@@ -77,18 +92,20 @@ async function objectResponse(object: R2ObjectBody | null, cacheControl: string)
   return new Response(object.body, { headers });
 }
 
-async function mediaResponse(env: AppEnv, row: SubmissionRow | null, cacheControl: string) {
+type MediaObject = Pick<SubmissionRow, 'image_key' | 'image_type'>;
+
+async function mediaResponse(env: AppEnv, row: MediaObject | null, cacheControl: string) {
   return objectResponse(row ? await env.FILES.get(row.image_key) : null, cacheControl);
 }
 
-async function displayResponse(env: AppEnv, row: SubmissionRow | null, cacheControl: string) {
+async function displayResponse(env: AppEnv, row: MediaObject | null, cacheControl: string) {
   if (!row) return new Response('Not found', { status: 404 });
   if (!row.image_type.startsWith('image/')) return mediaResponse(env, row, cacheControl);
   const display = await env.FILES.get(displayKey(row.image_key));
   return objectResponse(display || await env.FILES.get(row.image_key), cacheControl);
 }
 
-async function thumbnailResponse(env: AppEnv, row: SubmissionRow | null) {
+async function thumbnailResponse(env: AppEnv, row: MediaObject | null) {
   if (!row || !row.image_type.startsWith('image/')) return new Response('Not found', { status: 404 });
   const preview = await env.FILES.get(thumbnailKey(row.image_key));
   return objectResponse(preview || await env.FILES.get(row.image_key), 'public, max-age=31536000, immutable');
@@ -113,60 +130,121 @@ function validateImageVariants(image: File, display: File | null, thumbnail: Fil
   return null;
 }
 
+function parseMediaUploads(form: FormData) {
+  const requestedCount = Number(form.get('media_count'));
+  const count = Number.isInteger(requestedCount) && requestedCount > 0 ? requestedCount : 1;
+  const uploads: UploadMedia[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const suffix = requestedCount ? `_${index}` : '';
+    const image = form.get(`image${suffix}`);
+    const displayValue = form.get(`display${suffix}`);
+    const thumbnailValue = form.get(`thumbnail${suffix}`);
+    if (!(image instanceof File) || image.size === 0) continue;
+    uploads.push({
+      image,
+      display: displayValue instanceof File && displayValue.size > 0 ? displayValue : null,
+      thumbnail: thumbnailValue instanceof File && thumbnailValue.size > 0 ? thumbnailValue : null,
+    });
+  }
+  return { count, uploads };
+}
+
+function validateMediaUploads(count: number, uploads: UploadMedia[]) {
+  if (count > MAX_MEDIA_COUNT) return json({ error: `一次最多上传 ${MAX_MEDIA_COUNT} 张图片` }, 400);
+  if (!uploads.length || uploads.length !== count) return json({ error: '请选择照片或视频' }, 400);
+  if (uploads.reduce((sum, item) => sum + item.image.size, 0) > MAX_FILE_SIZE) return json({ error: '本次上传文件总大小超过 25MB' }, 413);
+  if (uploads.some((item) => !ALLOWED_MEDIA_TYPES.has(item.image.type))) return json({ error: '只支持 JPEG、PNG、WebP、GIF、AVIF、BMP、MP4、MOV 或 WebM' }, 415);
+  if (uploads.some((item) => item.image.type.startsWith('video/')) && uploads.length > 1) return json({ error: '视频需要单独上传，不能与其他素材混传' }, 400);
+  for (const item of uploads) {
+    const error = validateImageVariants(item.image, item.display, item.thumbnail);
+    if (error) return error;
+  }
+  return null;
+}
+
+async function storeMediaSet(env: AppEnv, submissionId: string, uploads: UploadMedia[]) {
+  const stored: StoredMedia[] = uploads.map((item, position) => {
+    const id = position === 0 ? submissionId : crypto.randomUUID();
+    return { ...item, id, position, imageKey: `submissions/${submissionId}/${crypto.randomUUID()}.${extensionFor(item.image.type)}` };
+  });
+  try {
+    await Promise.all(stored.flatMap((item) => [
+      env.FILES.put(item.imageKey, item.image.stream(), {
+        httpMetadata: { contentType: item.image.type },
+        customMetadata: { originalName: item.image.name.slice(0, 180) },
+      }),
+      item.display && env.FILES.put(displayKey(item.imageKey), item.display.stream(), { httpMetadata: { contentType: 'image/webp' } }),
+      item.thumbnail && env.FILES.put(thumbnailKey(item.imageKey), item.thumbnail.stream(), { httpMetadata: { contentType: 'image/webp' } }),
+    ]));
+    return stored;
+  } catch (error) {
+    await Promise.all(stored.map((item) => deleteMedia(env, item.imageKey)));
+    throw error;
+  }
+}
+
+async function extraMedia(env: AppEnv, submissionId: string) {
+  return (await env.DB.prepare('SELECT * FROM submission_media WHERE submission_id = ? ORDER BY position').bind(submissionId).all<SubmissionMediaRow>()).results;
+}
+
+async function galleryMedia(env: AppEnv, id: string): Promise<MediaObject | null> {
+  const submission = await env.DB.prepare('SELECT image_key, image_type FROM submissions WHERE id = ?').bind(id).first<MediaObject>();
+  return submission || env.DB.prepare('SELECT image_key, image_type FROM submission_media WHERE id = ?').bind(id).first<MediaObject>();
+}
+
+function publicMedia(row: Pick<SubmissionMediaRow, 'id' | 'image_name' | 'image_type' | 'image_size' | 'position'>) {
+  return { id: row.id, imageName: row.image_name, mediaType: row.image_type, imageSize: row.image_size, position: row.position };
+}
+
+async function publicSubmissionWithMedia(env: AppEnv, row: SubmissionRow) {
+  const extras = await extraMedia(env, row.id);
+  return {
+    ...publicSubmission(row),
+    media: [publicMedia({ id: row.id, image_name: row.image_name, image_type: row.image_type, image_size: row.image_size, position: 0 }), ...extras.map(publicMedia)],
+  };
+}
+
 async function createSubmission(env: AppEnv, request: Request) {
   await ensureSchema(env);
   const form = await request.formData();
   const company = cleanText(form.get('company'), 20);
   const title = cleanText(form.get('title'), 60);
   const description = cleanText(form.get('description'), 300);
-  const image = form.get('image');
-  const displayValue = form.get('display');
-  const display = displayValue instanceof File && displayValue.size > 0 ? displayValue : null;
-  const thumbnailValue = form.get('thumbnail');
-  const thumbnail = thumbnailValue instanceof File && thumbnailValue.size > 0 ? thumbnailValue : null;
+  const { count, uploads } = parseMediaUploads(form);
 
   if (!validCompany(company)) return json({ error: '请选择正确的连队' }, 400);
-  if (!(image instanceof File) || image.size === 0) return json({ error: '请选择照片或视频' }, 400);
-  if (image.size > MAX_FILE_SIZE) return json({ error: '文件超过 25MB' }, 413);
-  if (!ALLOWED_MEDIA_TYPES.has(image.type)) return json({ error: '只支持 JPEG、PNG、WebP、GIF、AVIF、BMP、MP4、MOV 或 WebM' }, 415);
-  const variantsError = validateImageVariants(image, display, thumbnail);
-  if (variantsError) return variantsError;
+  const mediaError = validateMediaUploads(count, uploads);
+  if (mediaError) return mediaError;
 
   const id = crypto.randomUUID();
   const credential = randomCredential();
   const credentialHash = await sha256(credential);
   const now = new Date().toISOString();
-  const imageKey = `submissions/${id}/${crypto.randomUUID()}.${extensionFor(image.type)}`;
+  const stored = await storeMediaSet(env, id, uploads);
+  const first = stored[0];
 
   try {
-    await Promise.all([
-      env.FILES.put(imageKey, image.stream(), {
-        httpMetadata: { contentType: image.type },
-        customMetadata: { originalName: image.name.slice(0, 180) },
-      }),
-      display && env.FILES.put(displayKey(imageKey), display.stream(), { httpMetadata: { contentType: 'image/webp' } }),
-      thumbnail && env.FILES.put(thumbnailKey(imageKey), thumbnail.stream(), { httpMetadata: { contentType: 'image/webp' } }),
-    ]);
-  } catch (error) {
-    await deleteMedia(env, imageKey);
-    throw error;
-  }
-
-  try {
-    await env.DB.prepare(`INSERT INTO submissions (
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO submissions (
       id, credential_hash, company, title, description,
       image_key, image_name, image_type, image_size, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
       id, credentialHash, company, title, description,
-      imageKey, image.name.slice(0, 180), image.type, image.size, now, now,
-    ).run();
+        first.imageKey, first.image.name.slice(0, 180), first.image.type, first.image.size, now, now,
+      ),
+      ...stored.slice(1).map((item) => env.DB.prepare(`INSERT INTO submission_media (
+        id, submission_id, image_key, image_name, image_type, image_size, position, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+        item.id, id, item.imageKey, item.image.name.slice(0, 180), item.image.type, item.image.size, item.position, now,
+      )),
+    ]);
   } catch (error) {
-    await deleteMedia(env, imageKey);
+    await Promise.all(stored.map((item) => deleteMedia(env, item.imageKey)));
     throw error;
   }
 
   const row = await env.DB.prepare('SELECT * FROM submissions WHERE id = ?').bind(id).first<SubmissionRow>();
-  return json({ credential, submission: row ? publicSubmission(row) : undefined }, 201);
+  return json({ credential, submission: row ? await publicSubmissionWithMedia(env, row) : undefined }, 201);
 }
 
 async function updateSubmission(env: AppEnv, request: Request, credential: string) {
@@ -177,55 +255,45 @@ async function updateSubmission(env: AppEnv, request: Request, credential: strin
   const company = cleanText(form.get('company'), 20);
   const title = cleanText(form.get('title'), 60);
   const description = cleanText(form.get('description'), 300);
-  const image = form.get('image');
-  const displayValue = form.get('display');
-  const display = displayValue instanceof File && displayValue.size > 0 ? displayValue : null;
-  const thumbnailValue = form.get('thumbnail');
-  const thumbnail = thumbnailValue instanceof File && thumbnailValue.size > 0 ? thumbnailValue : null;
+  const parsed = parseMediaUploads(form);
+  const replacingMedia = form.has('media_count') || parsed.uploads.length > 0;
   if (!validCompany(company)) return json({ error: '请选择正确的连队' }, 400);
-  if ((display || thumbnail) && (!(image instanceof File) || image.size === 0)) return json({ error: '展示图和缩略图必须和新原图一起上传' }, 400);
-
-  let imageKey = row.image_key;
-  let imageName = row.image_name;
-  let imageType = row.image_type;
-  let imageSize = row.image_size;
-  let newImageKey = '';
-
-  if (image instanceof File && image.size > 0) {
-    if (image.size > MAX_FILE_SIZE) return json({ error: '文件超过 25MB' }, 413);
-    if (!ALLOWED_MEDIA_TYPES.has(image.type)) return json({ error: '只支持 JPEG、PNG、WebP、GIF、AVIF、BMP、MP4、MOV 或 WebM' }, 415);
-    const variantsError = validateImageVariants(image, display, thumbnail);
-    if (variantsError) return variantsError;
-    newImageKey = `submissions/${row.id}/${crypto.randomUUID()}.${extensionFor(image.type)}`;
-    try {
-      await Promise.all([
-        env.FILES.put(newImageKey, image.stream(), { httpMetadata: { contentType: image.type } }),
-        display && env.FILES.put(displayKey(newImageKey), display.stream(), { httpMetadata: { contentType: 'image/webp' } }),
-        thumbnail && env.FILES.put(thumbnailKey(newImageKey), thumbnail.stream(), { httpMetadata: { contentType: 'image/webp' } }),
-      ]);
-    } catch (error) {
-      await deleteMedia(env, newImageKey);
-      throw error;
-    }
-    imageKey = newImageKey;
-    imageName = image.name.slice(0, 180);
-    imageType = image.type;
-    imageSize = image.size;
+  if (replacingMedia) {
+    const mediaError = validateMediaUploads(parsed.count, parsed.uploads);
+    if (mediaError) return mediaError;
   }
 
+  const oldExtras = replacingMedia ? await extraMedia(env, row.id) : [];
+  const stored = replacingMedia ? await storeMediaSet(env, row.id, parsed.uploads) : [];
+  const first = stored[0];
   const updatedAt = new Date().toISOString();
   try {
-    await env.DB.prepare(`UPDATE submissions SET company = ?, title = ?, description = ?,
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE submissions SET company = ?, title = ?, description = ?,
       image_key = ?, image_name = ?, image_type = ?, image_size = ?, updated_at = ? WHERE id = ?`)
-      .bind(company, title, description, imageKey, imageName, imageType, imageSize, updatedAt, row.id).run();
+        .bind(
+          company, title, description,
+          first?.imageKey || row.image_key,
+          first?.image.name.slice(0, 180) || row.image_name,
+          first?.image.type || row.image_type,
+          first?.image.size || row.image_size,
+          updatedAt, row.id,
+        ),
+      ...(replacingMedia ? [env.DB.prepare('DELETE FROM submission_media WHERE submission_id = ?').bind(row.id)] : []),
+      ...stored.slice(1).map((item) => env.DB.prepare(`INSERT INTO submission_media (
+        id, submission_id, image_key, image_name, image_type, image_size, position, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+        item.id, row.id, item.imageKey, item.image.name.slice(0, 180), item.image.type, item.image.size, item.position, updatedAt,
+      )),
+    ]);
   } catch (error) {
-    if (newImageKey) await deleteMedia(env, newImageKey);
+    await Promise.all(stored.map((item) => deleteMedia(env, item.imageKey)));
     throw error;
   }
-  if (newImageKey) await deleteMedia(env, row.image_key);
+  if (replacingMedia) await Promise.all([deleteMedia(env, row.image_key), ...oldExtras.map((item) => deleteMedia(env, item.image_key))]);
 
   const updated = await env.DB.prepare('SELECT * FROM submissions WHERE id = ?').bind(row.id).first<SubmissionRow>();
-  return json(publicSubmission(updated!));
+  return json(await publicSubmissionWithMedia(env, updated!));
 }
 
 async function galleryPopularity(env: AppEnv, request: Request) {
@@ -270,13 +338,20 @@ async function listAdminSubmissions(env: AppEnv, request: Request) {
     ? env.DB.prepare('SELECT * FROM submissions WHERE company = ? ORDER BY created_at DESC LIMIT ? OFFSET ?').bind(company, limit + 1, offset)
     : env.DB.prepare('SELECT * FROM submissions ORDER BY created_at DESC LIMIT ? OFFSET ?').bind(limit + 1, offset);
   const result = await query.all<SubmissionRow>();
+  const pageRows = result.results.slice(0, limit);
+  const pageIds = pageRows.map((row) => row.id);
+  const mediaCounts = pageIds.length
+    ? (await env.DB.prepare(`SELECT submission_id, COUNT(*) AS count FROM submission_media WHERE submission_id IN (${pageIds.map(() => '?').join(',')}) GROUP BY submission_id`).bind(...pageIds).all<{ submission_id: string; count: number }>()).results
+    : [];
+  const countBySubmission = Object.fromEntries(mediaCounts.map((item) => [item.submission_id, item.count + 1]));
   const filteredTotal = company
     ? await env.DB.prepare('SELECT COUNT(*) AS total FROM submissions WHERE company = ?').bind(company).first<{ total: number }>()
     : await env.DB.prepare('SELECT COUNT(*) AS total FROM submissions').first<{ total: number }>();
-  const stats = await env.DB.prepare(`SELECT COUNT(*) AS total, COALESCE(SUM(image_size), 0) AS usedSpace,
+  const stats = await env.DB.prepare(`SELECT COUNT(*) AS total,
+    COALESCE(SUM(image_size), 0) + (SELECT COALESCE(SUM(image_size), 0) FROM submission_media) AS usedSpace,
     COUNT(DISTINCT company) AS companyCount FROM submissions`).first<{ total: number; usedSpace: number; companyCount: number }>();
   return json({
-    submissions: publicRows(result.results.slice(0, limit)),
+    submissions: publicRows(pageRows).map((item) => ({ ...item, mediaCount: countBySubmission[item.id] || 1 })),
     hasMore: result.results.length > limit,
     filteredTotal: filteredTotal?.total || 0,
     stats: stats || { total: 0, usedSpace: 0, companyCount: 0 },
@@ -293,9 +368,16 @@ async function deleteAdminSubmissions(env: AppEnv, request: Request) {
 
   const placeholders = ids.map(() => '?').join(',');
   const rows = await env.DB.prepare(`SELECT * FROM submissions WHERE id IN (${placeholders})`).bind(...ids).all<SubmissionRow>();
-  const statements = rows.results.map((row) => env.DB.prepare('DELETE FROM submissions WHERE id = ?').bind(row.id));
+  const extras = await env.DB.prepare(`SELECT * FROM submission_media WHERE submission_id IN (${placeholders})`).bind(...ids).all<SubmissionMediaRow>();
+  const statements = [
+    env.DB.prepare(`DELETE FROM submission_media WHERE submission_id IN (${placeholders})`).bind(...ids),
+    ...rows.results.map((row) => env.DB.prepare('DELETE FROM submissions WHERE id = ?').bind(row.id)),
+  ];
   if (statements.length) await env.DB.batch(statements);
-  await Promise.all(rows.results.map((row) => deleteMedia(env, row.image_key)));
+  await Promise.all([
+    ...rows.results.map((row) => deleteMedia(env, row.image_key)),
+    ...extras.results.map((item) => deleteMedia(env, item.image_key)),
+  ]);
   return json({ deleted: rows.results.length });
 }
 
@@ -320,8 +402,12 @@ async function deleteAdminSubmission(env: AppEnv, request: Request, id: string) 
   await ensureSchema(env);
   const row = await env.DB.prepare('SELECT * FROM submissions WHERE id = ?').bind(id).first<SubmissionRow>();
   if (!row) return json({ error: '投稿不存在' }, 404);
-  await env.DB.prepare('DELETE FROM submissions WHERE id = ?').bind(id).run();
-  await deleteMedia(env, row.image_key);
+  const extras = await extraMedia(env, id);
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM submission_media WHERE submission_id = ?').bind(id),
+    env.DB.prepare('DELETE FROM submissions WHERE id = ?').bind(id),
+  ]);
+  await Promise.all([deleteMedia(env, row.image_key), ...extras.map((item) => deleteMedia(env, item.image_key))]);
   return json({ ok: true });
 }
 
@@ -334,6 +420,11 @@ async function exportAdminSubmissions(env: AppEnv, request: Request) {
     ? env.DB.prepare('SELECT * FROM submissions WHERE company = ? ORDER BY created_at').bind(company)
     : env.DB.prepare('SELECT * FROM submissions ORDER BY company, created_at');
   const rows = (await query.all<SubmissionRow>()).results;
+  const rowIds = rows.map((row) => row.id);
+  const extras = rowIds.length
+    ? (await env.DB.prepare(`SELECT * FROM submission_media WHERE submission_id IN (${rowIds.map(() => '?').join(',')}) ORDER BY submission_id, position`).bind(...rowIds).all<SubmissionMediaRow>()).results
+    : [];
+  const extrasBySubmission = Map.groupBy(extras, (item) => item.submission_id);
 
   const header = ['投稿ID', '连队', '标题', '说明', '素材文件名', '文件大小', '上传时间', '修改时间'];
   const csv = [header, ...rows.map((row) => [
@@ -343,8 +434,14 @@ async function exportAdminSubmissions(env: AppEnv, request: Request) {
 
   const files: Record<string, Uint8Array> = { '投稿清单.csv': strToU8(`\uFEFF${csv}`) };
   for (const row of rows) {
-    const object = await env.FILES.get(row.image_key);
-    if (object) files[`${safeName(row.company)}/${row.id}_${safeName(row.image_name)}`] = new Uint8Array(await object.arrayBuffer());
+    const media = [
+      { image_key: row.image_key, image_name: row.image_name, position: 0 },
+      ...(extrasBySubmission.get(row.id) || []),
+    ];
+    for (const item of media) {
+      const object = await env.FILES.get(item.image_key);
+      if (object) files[`${safeName(row.company)}/${row.id}/${String(item.position + 1).padStart(2, '0')}_${safeName(item.image_name)}`] = new Uint8Array(await object.arrayBuffer());
+    }
   }
   const archive = zipSync(files, { level: 0 });
   const name = `${company || '全部连队'}_集训素材.zip`;
@@ -367,17 +464,17 @@ export const onRequest: PagesFunction<AppEnv> = async ({ request, env }) => {
         if (request.method !== 'GET') return notAllowed('GET');
         await ensureSchema(env);
         const result = await env.DB.prepare('SELECT * FROM submissions ORDER BY created_at DESC').all<SubmissionRow>();
+        const extraResult = await env.DB.prepare('SELECT * FROM submission_media ORDER BY submission_id, position').all<SubmissionMediaRow>();
+        const extrasBySubmission = Map.groupBy(extraResult.results, (item) => item.submission_id);
         const popularity = await galleryPopularity(env, request);
         return json({
-          items: result.results.map((row) => ({
-            id: row.id,
-            company: row.company,
-            title: row.title,
-            description: row.description,
-            mediaType: row.image_type,
-            createdAt: row.created_at,
-            updatedAt: row.updated_at,
-          })),
+          items: result.results.flatMap((row) => [
+            { id: row.id, company: row.company, title: row.title, description: row.description, mediaType: row.image_type, createdAt: row.created_at, updatedAt: row.updated_at },
+            ...(extrasBySubmission.get(row.id) || []).map((item) => ({
+              id: item.id, company: row.company, title: row.title, description: row.description, mediaType: item.image_type, createdAt: row.created_at, updatedAt: row.updated_at,
+            })),
+          ]),
+          submissionCount: result.results.length,
           ...popularity,
         });
       }
@@ -386,13 +483,13 @@ export const onRequest: PagesFunction<AppEnv> = async ({ request, env }) => {
       case 'gallery-media': {
         if (request.method !== 'GET') return notAllowed('GET');
         await ensureSchema(env);
-        const row = await env.DB.prepare('SELECT * FROM submissions WHERE id = ?').bind(route.value).first<SubmissionRow>();
+        const row = await galleryMedia(env, route.value);
         return displayResponse(env, row, 'public, max-age=31536000, immutable');
       }
       case 'gallery-thumbnail': {
         if (request.method !== 'GET') return notAllowed('GET');
         await ensureSchema(env);
-        const row = await env.DB.prepare('SELECT * FROM submissions WHERE id = ?').bind(route.value).first<SubmissionRow>();
+        const row = await galleryMedia(env, route.value);
         return thumbnailResponse(env, row);
       }
       case 'submissions':
@@ -400,13 +497,19 @@ export const onRequest: PagesFunction<AppEnv> = async ({ request, env }) => {
       case 'submission': {
         if (request.method === 'GET') {
           const row = await findSubmission(env, route.value);
-          return row ? json(publicSubmission(row)) : json({ error: '上传码无效，没有找到投稿' }, 404);
+          return row ? json(await publicSubmissionWithMedia(env, row)) : json({ error: '上传码无效，没有找到投稿' }, 404);
         }
         return request.method === 'PUT' ? updateSubmission(env, request, route.value) : notAllowed('GET', 'PUT');
       }
       case 'submission-media': {
         if (request.method !== 'GET') return notAllowed('GET');
-        return displayResponse(env, await findSubmission(env, route.value), 'private, max-age=60');
+        const submission = await findSubmission(env, route.value);
+        if (!submission) return new Response('Not found', { status: 404 });
+        const mediaId = new URL(request.url).searchParams.get('media');
+        const media = mediaId && mediaId !== submission.id
+          ? await env.DB.prepare('SELECT image_key, image_type FROM submission_media WHERE id = ? AND submission_id = ?').bind(mediaId, submission.id).first<MediaObject>()
+          : submission;
+        return displayResponse(env, media, 'private, max-age=60');
       }
       case 'admin-login': {
         if (request.method !== 'POST') return notAllowed('POST');
@@ -431,7 +534,7 @@ export const onRequest: PagesFunction<AppEnv> = async ({ request, env }) => {
         const denied = await requireAdmin(env, request);
         if (denied) return denied;
         await ensureSchema(env);
-        const row = await env.DB.prepare('SELECT * FROM submissions WHERE id = ?').bind(route.value).first<SubmissionRow>();
+        const row = await galleryMedia(env, route.value);
         return mediaResponse(env, row, 'private, max-age=60');
       }
       case 'admin-export':

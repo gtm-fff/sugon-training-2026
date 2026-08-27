@@ -122,6 +122,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .dropzone input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .media-picker { display: grid; gap: 8px; }
 .remove-media { justify-self: end; padding: 0; color: var(--red); background: none; border: 0; cursor: pointer; font-size: 11px; font-weight: 800; }
+.media-preview-grid { display: grid; grid-template-columns: repeat(3, 58px); gap: 4px; }
+.media-preview-grid img, .media-preview-grid video { width: 58px; height: 54px; }
+.selected-media-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.selected-media-list button { max-width: 100%; padding: 6px 9px; overflow: hidden; cursor: pointer; color: var(--red); background: transparent; border: 1px solid rgba(200,30,42,.25); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .dropzone-mark { display: grid; place-items: center; width: 74px; height: 74px; color: var(--red); background: white; border: 1px solid var(--line); font-size: 28px; font-weight: 200; }
 .dropzone img, .dropzone video { width: 94px; height: 88px; object-fit: cover; background: #171412; }
 .dropzone-copy { display: grid; gap: 7px; }

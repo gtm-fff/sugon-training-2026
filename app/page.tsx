@@ -26,6 +26,15 @@ type Submission = {
   imageSize: number;
   createdAt: string;
   updatedAt: string;
+  media: SubmissionMedia[];
+};
+
+type SubmissionMedia = {
+  id: string;
+  imageName: string;
+  mediaType: string;
+  imageSize: number;
+  position: number;
 };
 
 type GalleryItem = {
@@ -86,7 +95,7 @@ function CompanyAlbumCard({ album, items, likes, liked, liking, onLike }: {
             : <img src={cover.thumbnailUrl} alt={`${album.name}${cover.isDemo ? '示例封面' : cover.title || '最新投稿'}`} loading="lazy" decoding="async" width="720" height="480" />}
         </button>
         <span className="company-album-badge"><b>{album.number}</b>{album.name}</span>
-        <span className="company-album-position">{items.length} 份投稿&nbsp; →</span>
+        <span className="company-album-position">{items.length} 份素材&nbsp; →</span>
       </div>
       <dialog ref={previewRef} className="image-lightbox" onClick={(event) => { if (event.target === event.currentTarget) event.currentTarget.close(); }}>
         <button type="button" className="image-lightbox-close" onClick={() => previewRef.current?.close()} aria-label="关闭相册">×</button>
@@ -106,7 +115,7 @@ function CompanyAlbumCard({ album, items, likes, liked, liking, onLike }: {
         </div>
       </dialog>
       <div className="company-album-copy">
-        <div><span>COMPANY {album.number}</span><small>{items.length} 份用户投稿</small></div>
+        <div><span>COMPANY {album.number}</span><small>{items.length} 份素材</small></div>
         <div className="company-album-title-row">
           <h3>{cover.title || '未填写素材标题'}</h3>
           <button type="button" className={liked ? 'liked' : ''} disabled={liked || liking} onClick={onLike} aria-pressed={liked} aria-label={`${liked ? '已为' : '给'}${album.name}点赞`}>
@@ -167,39 +176,51 @@ async function createImageVariants(file: File) {
   }
 }
 
-function MediaPicker({ file, onChange, currentImage, currentType }: {
-  file: File | null;
-  onChange: (file: File | null) => void;
-  currentImage?: string;
-  currentType?: string;
+async function appendMedia(data: FormData, files: File[]) {
+  data.set('media_count', String(files.length));
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    data.set(`image_${index}`, file);
+    const variants = await createImageVariants(file);
+    if (variants?.display) data.set(`display_${index}`, variants.display);
+    if (variants?.thumbnail) data.set(`thumbnail_${index}`, variants.thumbnail);
+  }
+}
+
+function MediaPicker({ files, onChange, currentMedia = [] }: {
+  files: File[];
+  onChange: (files: File[]) => void;
+  currentMedia?: Array<{ id: string; url: string; mediaType: string; imageName: string }>;
 }) {
-  const preview = useMemo(() => (file ? URL.createObjectURL(file) : currentImage), [file, currentImage]);
-  const isVideo = (file?.type || currentType || '').startsWith('video/');
+  const previews = useMemo(() => files.map((file) => ({ file, url: URL.createObjectURL(file) })), [files]);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => () => {
-    if (file && preview) URL.revokeObjectURL(preview);
-  }, [file, preview]);
+  useEffect(() => () => previews.forEach((item) => URL.revokeObjectURL(item.url)), [previews]);
+  useEffect(() => {
+    if (!files.length && inputRef.current) inputRef.current.value = '';
+  }, [files.length]);
 
   function pick(event: ChangeEvent<HTMLInputElement>) {
-    onChange(event.target.files?.[0] ?? null);
+    onChange(Array.from(event.target.files || []));
   }
+
+  const visibleMedia = files.length
+    ? previews.map((item, index) => ({ id: String(index), url: item.url, mediaType: item.file.type, imageName: item.file.name }))
+    : currentMedia;
 
   return (
     <div className="media-picker">
-      <label className={`dropzone ${preview ? 'has-preview' : ''}`}>
-        {preview ? (
-          isVideo
-            ? <video src={preview} aria-label="待上传视频预览" controls muted playsInline />
-            : <img src={preview} alt="待上传照片预览" />
-        ) : <span className="dropzone-mark">＋</span>}
+      <label className={`dropzone ${visibleMedia.length ? 'has-preview' : ''}`}>
+        {visibleMedia.length ? <span className="media-preview-grid">{visibleMedia.map((item) => item.mediaType.startsWith('video/')
+          ? <video key={item.id} src={item.url} aria-label={item.imageName} muted playsInline preload="metadata" />
+          : <img key={item.id} src={item.url} alt={item.imageName} />)}</span> : <span className="dropzone-mark">＋</span>}
         <span className="dropzone-copy">
-          <strong>{file ? file.name : currentImage ? '点击替换素材' : '选择照片或视频'}</strong>
-          <small>{file ? `${formatBytes(file.size)} · 点击重新选择` : '图片自动优化；GIF 保留动画；视频最大 25MB'}</small>
+          <strong>{files.length ? `已选择 ${files.length} 份素材` : currentMedia.length ? '点击整组替换素材' : '选择一张或多张图片 / 一个视频'}</strong>
+          <small>{files.length ? `${formatBytes(files.reduce((sum, file) => sum + file.size, 0))} · 合计` : '最多 9 张图片；总大小不超过 25MB'}</small>
         </span>
-        <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif,image/bmp,video/mp4,video/quicktime,video/webm" onChange={pick} />
+        <input ref={inputRef} type="file" multiple accept="image/jpeg,image/png,image/webp,image/gif,image/avif,image/bmp,video/mp4,video/quicktime,video/webm" onChange={pick} />
       </label>
-      {file && <button type="button" className="remove-media" onClick={() => { onChange(null); if (inputRef.current) inputRef.current.value = ''; }}>移除已选素材</button>}
+      {files.length > 0 && <div className="selected-media-list">{files.map((file, index) => <button type="button" key={`${file.name}-${file.lastModified}`} onClick={() => onChange(files.filter((_, itemIndex) => itemIndex !== index))}>移除 {file.name}</button>)}</div>}
     </div>
   );
 }
@@ -210,7 +231,7 @@ export default function Home() {
   const [company, setCompany] = useState('一连');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [image, setImage] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [credential, setCredential] = useState('');
   const [submission, setSubmission] = useState<Submission | null>(null);
   const [busy, setBusy] = useState(false);
@@ -220,6 +241,7 @@ export default function Home() {
   const [shareMessage, setShareMessage] = useState('');
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([]);
   const [galleryLoaded, setGalleryLoaded] = useState(false);
+  const [submissionCount, setSubmissionCount] = useState(0);
   const [companyLikes, setCompanyLikes] = useState<Record<string, number>>({});
   const [likedCompanies, setLikedCompanies] = useState<string[]>([]);
   const [sortMode, setSortMode] = useState<'default' | 'popular'>('default');
@@ -233,9 +255,10 @@ export default function Home() {
 
   useEffect(() => {
     fetch('/api/gallery')
-      .then(async (response) => (await response.json()) as { items?: GalleryItem[]; likes?: Record<string, number>; likedCompanies?: string[] })
+      .then(async (response) => (await response.json()) as { items?: GalleryItem[]; submissionCount?: number; likes?: Record<string, number>; likedCompanies?: string[] })
       .then((data) => {
         setGalleryItems(data.items || []);
+        setSubmissionCount(data.submissionCount ?? data.items?.length ?? 0);
         setCompanyLikes(data.likes || {});
         setLikedCompanies(data.likedCompanies || []);
       })
@@ -252,37 +275,46 @@ export default function Home() {
     setCreatedCredential('');
   }
 
-  function validateMedia(file: File | null, required = true) {
-    if (!file && required) return '请选择照片或视频';
-    if (file && file.size > MAX_FILE_SIZE) return '文件超过 25MB，请压缩后再试';
-    if (file && !['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif', 'image/bmp', 'video/mp4', 'video/quicktime', 'video/webm'].includes(file.type)) return '只支持 JPEG、PNG、WebP、GIF、AVIF、BMP、MP4、MOV 或 WebM';
+  function validateMedia(selectedFiles: File[], required = true) {
+    if (!selectedFiles.length && required) return '请选择照片或视频';
+    if (selectedFiles.length > 9) return '一次最多上传 9 张图片';
+    if (selectedFiles.reduce((sum, file) => sum + file.size, 0) > MAX_FILE_SIZE) return '本次上传文件总大小超过 25MB';
+    if (selectedFiles.some((file) => !['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif', 'image/bmp', 'video/mp4', 'video/quicktime', 'video/webm'].includes(file.type))) return '只支持 JPEG、PNG、WebP、GIF、AVIF、BMP、MP4、MOV 或 WebM';
+    if (selectedFiles.some((file) => file.type.startsWith('video/')) && selectedFiles.length > 1) return '视频需要单独上传，不能与其他素材混传';
     return '';
   }
 
   async function upload(event: FormEvent) {
     event.preventDefault();
     resetFeedback();
-    const imageError = validateMedia(image);
+    const imageError = validateMedia(files);
     if (imageError) return setMessage(imageError);
     const data = new FormData();
     data.set('company', company);
     data.set('title', title);
     data.set('description', description);
-    data.set('image', image!);
     setBusy(true);
     try {
-      const variants = await createImageVariants(image!);
-      if (variants) {
-        if (variants.display) data.set('display', variants.display);
-        data.set('thumbnail', variants.thumbnail);
-      }
+      await appendMedia(data, files);
       const response = await fetch('/api/submissions', { method: 'POST', body: data });
-      const result = (await response.json()) as { credential?: string; submission?: GalleryItem; error?: string };
+      const result = (await response.json()) as { credential?: string; submission?: Submission; error?: string };
       if (!response.ok) throw new Error(result.error || '上传失败');
       setCopyMessage('点击复制上传码');
       setCreatedCredential(result.credential!);
-      if (result.submission) setGalleryItems((current) => [result.submission!, ...current]);
-      setImage(null);
+      if (result.submission) setGalleryItems((current) => [
+        ...result.submission!.media.map((item) => ({
+          id: item.id,
+          company: result.submission!.company,
+          title: result.submission!.title,
+          description: result.submission!.description,
+          mediaType: item.mediaType,
+          createdAt: result.submission!.createdAt,
+          updatedAt: result.submission!.updatedAt,
+        })),
+        ...current,
+      ]);
+      setSubmissionCount((current) => current + 1);
+      setFiles([]);
       setTitle('');
       setDescription('');
     } catch (error) {
@@ -307,7 +339,7 @@ export default function Home() {
       setCompany(result.company);
       setTitle(result.title);
       setDescription(result.description);
-      setImage(null);
+      setFiles([]);
     } catch (error) {
       setSubmission(null);
       setMessage(error instanceof Error ? error.message : '查询失败');
@@ -319,27 +351,20 @@ export default function Home() {
   async function update(event: FormEvent) {
     event.preventDefault();
     resetFeedback();
-    const imageError = validateMedia(image, false);
+    const imageError = validateMedia(files, false);
     if (imageError) return setMessage(imageError);
     const data = new FormData();
     data.set('company', company);
     data.set('title', title);
     data.set('description', description);
-    if (image) data.set('image', image);
     setBusy(true);
     try {
-      if (image) {
-        const variants = await createImageVariants(image);
-        if (variants) {
-          if (variants.display) data.set('display', variants.display);
-          data.set('thumbnail', variants.thumbnail);
-        }
-      }
+      if (files.length) await appendMedia(data, files);
       const response = await fetch(`/api/submissions/${encodeURIComponent(credential)}`, { method: 'PUT', body: data });
       const result = (await response.json()) as Submission & { error?: string };
       if (!response.ok) throw new Error(result.error || '保存失败');
       setSubmission(result);
-      setImage(null);
+      setFiles([]);
       setMessage('修改已保存');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '保存失败');
@@ -461,7 +486,7 @@ export default function Home() {
           </div>
           <div className="hero-facts">
             <span><strong>16</strong> 青春连队</span>
-            <span><strong>{galleryLoaded ? galleryItems.length : '—'}</strong> 总投稿数</span>
+            <span><strong>{galleryLoaded ? submissionCount : '—'}</strong> 总投稿数</span>
           </div>
         </div>
         <div className="pass-card" aria-hidden="true">
@@ -539,7 +564,7 @@ export default function Home() {
               <label><span>所属连队 *</span><select value={company} onChange={(e) => setCompany(e.target.value)}>{COMPANIES.map((item) => <option key={item}>{item}</option>)}</select></label>
               <label><span>素材标题</span><input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={60} placeholder="给这个瞬间起个名字（选填）" /></label>
               <label><span>故事说明</span><textarea value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} placeholder="写下当时发生了什么（选填）" /></label>
-              <MediaPicker file={image} onChange={setImage} />
+              <MediaPicker files={files} onChange={setFiles} />
               {message && <p className="form-message error" role="alert">{message}</p>}
               <button className="primary-button" disabled={busy}>{busy ? '正在优化并上传…' : '上传素材并生成代码'}<span>→</span></button>
             </form>
@@ -552,7 +577,12 @@ export default function Home() {
               </div>
               <label><span>素材标题</span><input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={60} /></label>
               <label><span>故事说明</span><textarea value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} /></label>
-              <MediaPicker file={image} onChange={setImage} currentImage={`/api/submissions/${encodeURIComponent(credential)}/image?v=${submission.updatedAt}`} currentType={submission.mediaType} />
+              <MediaPicker files={files} onChange={setFiles} currentMedia={submission.media.map((item) => ({
+                id: item.id,
+                url: `/api/submissions/${encodeURIComponent(credential)}/image?media=${encodeURIComponent(item.id)}&v=${submission.updatedAt}`,
+                mediaType: item.mediaType,
+                imageName: item.imageName,
+              }))} />
               {message && <p className={`form-message ${message.includes('保存') ? 'success' : 'error'}`}>{message}</p>}
               <div className="button-row"><button type="button" className="text-button" onClick={() => setSubmission(null)}>换一个凭据</button><button className="primary-button" disabled={busy}>{busy ? '正在保存…' : '保存修改'}<span>→</span></button></div>
             </form>
