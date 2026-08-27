@@ -25,6 +25,7 @@ import {
 import { matchRoute } from './router';
 
 const MAX_THUMBNAIL_SIZE = 1024 * 1024;
+const MAX_DISPLAY_IMAGE_SIZE = 2 * 1024 * 1024;
 
 function notAllowed(...methods: string[]) {
   return new Response('Method not allowed', { status: 405, headers: { Allow: methods.join(', ') } });
@@ -52,6 +53,10 @@ function thumbnailKey(imageKey: string) {
   return `${imageKey}.preview.webp`;
 }
 
+function displayKey(imageKey: string) {
+  return `${imageKey}.display.webp`;
+}
+
 async function objectResponse(object: R2ObjectBody | null, cacheControl: string) {
   if (!object) return new Response('Not found', { status: 404 });
   const headers = new Headers();
@@ -65,6 +70,13 @@ async function mediaResponse(env: AppEnv, row: SubmissionRow | null, cacheContro
   return objectResponse(row ? await env.FILES.get(row.image_key) : null, cacheControl);
 }
 
+async function displayResponse(env: AppEnv, row: SubmissionRow | null, cacheControl: string) {
+  if (!row) return new Response('Not found', { status: 404 });
+  if (!row.image_type.startsWith('image/')) return mediaResponse(env, row, cacheControl);
+  const display = await env.FILES.get(displayKey(row.image_key));
+  return objectResponse(display || await env.FILES.get(row.image_key), cacheControl);
+}
+
 async function thumbnailResponse(env: AppEnv, row: SubmissionRow | null) {
   if (!row || !row.image_type.startsWith('image/')) return new Response('Not found', { status: 404 });
   const preview = await env.FILES.get(thumbnailKey(row.image_key));
@@ -72,7 +84,22 @@ async function thumbnailResponse(env: AppEnv, row: SubmissionRow | null) {
 }
 
 async function deleteMedia(env: AppEnv, imageKey: string) {
-  await Promise.all([env.FILES.delete(imageKey), env.FILES.delete(thumbnailKey(imageKey))]);
+  await Promise.all([
+    env.FILES.delete(imageKey),
+    env.FILES.delete(displayKey(imageKey)),
+    env.FILES.delete(thumbnailKey(imageKey)),
+  ]);
+}
+
+function validateImageVariants(image: File, display: File | null, thumbnail: File | null) {
+  if (!image.type.startsWith('image/')) {
+    return display || thumbnail ? json({ error: '视频不接受图片展示图或缩略图' }, 400) : null;
+  }
+  if (display && display.type !== 'image/webp') return json({ error: '展示图必须为 WebP' }, 415);
+  if (display && display.size > MAX_DISPLAY_IMAGE_SIZE) return json({ error: '展示图超过 2MB' }, 413);
+  if (thumbnail && thumbnail.type !== 'image/webp') return json({ error: '缩略图必须为 WebP' }, 415);
+  if (thumbnail && thumbnail.size > MAX_THUMBNAIL_SIZE) return json({ error: '缩略图超过 1MB' }, 413);
+  return null;
 }
 
 async function createSubmission(env: AppEnv, request: Request) {
@@ -82,16 +109,17 @@ async function createSubmission(env: AppEnv, request: Request) {
   const title = cleanText(form.get('title'), 60);
   const description = cleanText(form.get('description'), 300);
   const image = form.get('image');
+  const displayValue = form.get('display');
+  const display = displayValue instanceof File && displayValue.size > 0 ? displayValue : null;
   const thumbnailValue = form.get('thumbnail');
   const thumbnail = thumbnailValue instanceof File && thumbnailValue.size > 0 ? thumbnailValue : null;
 
   if (!validCompany(company)) return json({ error: '请选择正确的连队' }, 400);
   if (!(image instanceof File) || image.size === 0) return json({ error: '请选择照片或视频' }, 400);
-  if (image.size > MAX_FILE_SIZE) return json({ error: '文件超过 10MB' }, 413);
+  if (image.size > MAX_FILE_SIZE) return json({ error: '文件超过 25MB' }, 413);
   if (!ALLOWED_MEDIA_TYPES.has(image.type)) return json({ error: '只支持 JPEG、PNG、WebP、MP4、MOV 或 WebM' }, 415);
-  if (thumbnail && thumbnail.type !== 'image/webp') return json({ error: '缩略图必须为 WebP' }, 415);
-  if (thumbnail && thumbnail.size > MAX_THUMBNAIL_SIZE) return json({ error: '缩略图超过 1MB' }, 413);
-  if (thumbnail && !image.type.startsWith('image/')) return json({ error: '视频不接受图片缩略图' }, 400);
+  const variantsError = validateImageVariants(image, display, thumbnail);
+  if (variantsError) return variantsError;
 
   const id = crypto.randomUUID();
   const credential = randomCredential();
@@ -105,6 +133,7 @@ async function createSubmission(env: AppEnv, request: Request) {
         httpMetadata: { contentType: image.type },
         customMetadata: { originalName: image.name.slice(0, 180) },
       }),
+      display && env.FILES.put(displayKey(imageKey), display.stream(), { httpMetadata: { contentType: 'image/webp' } }),
       thumbnail && env.FILES.put(thumbnailKey(imageKey), thumbnail.stream(), { httpMetadata: { contentType: 'image/webp' } }),
     ]);
   } catch (error) {
@@ -138,10 +167,12 @@ async function updateSubmission(env: AppEnv, request: Request, credential: strin
   const title = cleanText(form.get('title'), 60);
   const description = cleanText(form.get('description'), 300);
   const image = form.get('image');
+  const displayValue = form.get('display');
+  const display = displayValue instanceof File && displayValue.size > 0 ? displayValue : null;
   const thumbnailValue = form.get('thumbnail');
   const thumbnail = thumbnailValue instanceof File && thumbnailValue.size > 0 ? thumbnailValue : null;
   if (!validCompany(company)) return json({ error: '请选择正确的连队' }, 400);
-  if (thumbnail && (!(image instanceof File) || image.size === 0)) return json({ error: '缩略图必须和新原图一起上传' }, 400);
+  if ((display || thumbnail) && (!(image instanceof File) || image.size === 0)) return json({ error: '展示图和缩略图必须和新原图一起上传' }, 400);
 
   let imageKey = row.image_key;
   let imageName = row.image_name;
@@ -150,15 +181,15 @@ async function updateSubmission(env: AppEnv, request: Request, credential: strin
   let newImageKey = '';
 
   if (image instanceof File && image.size > 0) {
-    if (image.size > MAX_FILE_SIZE) return json({ error: '文件超过 10MB' }, 413);
+    if (image.size > MAX_FILE_SIZE) return json({ error: '文件超过 25MB' }, 413);
     if (!ALLOWED_MEDIA_TYPES.has(image.type)) return json({ error: '只支持 JPEG、PNG、WebP、MP4、MOV 或 WebM' }, 415);
-    if (thumbnail && thumbnail.type !== 'image/webp') return json({ error: '缩略图必须为 WebP' }, 415);
-    if (thumbnail && thumbnail.size > MAX_THUMBNAIL_SIZE) return json({ error: '缩略图超过 1MB' }, 413);
-    if (thumbnail && !image.type.startsWith('image/')) return json({ error: '视频不接受图片缩略图' }, 400);
+    const variantsError = validateImageVariants(image, display, thumbnail);
+    if (variantsError) return variantsError;
     newImageKey = `submissions/${row.id}/${crypto.randomUUID()}.${extensionFor(image.type)}`;
     try {
       await Promise.all([
         env.FILES.put(newImageKey, image.stream(), { httpMetadata: { contentType: image.type } }),
+        display && env.FILES.put(displayKey(newImageKey), display.stream(), { httpMetadata: { contentType: 'image/webp' } }),
         thumbnail && env.FILES.put(thumbnailKey(newImageKey), thumbnail.stream(), { httpMetadata: { contentType: 'image/webp' } }),
       ]);
     } catch (error) {
@@ -309,7 +340,7 @@ export const onRequest: PagesFunction<AppEnv> = async ({ request, env }) => {
         if (request.method !== 'GET') return notAllowed('GET');
         await ensureSchema(env);
         const row = await env.DB.prepare('SELECT * FROM submissions WHERE id = ?').bind(route.value).first<SubmissionRow>();
-        return mediaResponse(env, row, 'public, max-age=31536000, immutable');
+        return displayResponse(env, row, 'public, max-age=31536000, immutable');
       }
       case 'gallery-thumbnail': {
         if (request.method !== 'GET') return notAllowed('GET');
@@ -328,7 +359,7 @@ export const onRequest: PagesFunction<AppEnv> = async ({ request, env }) => {
       }
       case 'submission-media': {
         if (request.method !== 'GET') return notAllowed('GET');
-        return mediaResponse(env, await findSubmission(env, route.value), 'private, max-age=60');
+        return displayResponse(env, await findSubmission(env, route.value), 'private, max-age=60');
       }
       case 'admin-login': {
         if (request.method !== 'POST') return notAllowed('POST');

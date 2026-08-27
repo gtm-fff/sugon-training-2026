@@ -11,7 +11,9 @@ const COMPANY_ALBUMS = COMPANIES.map((name, index) => ({
   number: String(index + 1).padStart(2, '0'),
   demoUrl: `/company-demo/${String(index + 1).padStart(2, '0')}.webp`,
 }));
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const MAX_FILE_SIZE = 25 * 1024 * 1024;
+const MAX_DISPLAY_IMAGE_SIZE = 2 * 1024 * 1024;
+const MAX_THUMBNAIL_SIZE = 1024 * 1024;
 const SHARE_URL = 'https://sugon-training-2026.pages.dev';
 
 type Submission = {
@@ -108,21 +110,49 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024).toFixed(0)} KB`;
 }
 
-async function createThumbnail(file: File) {
-  if (!file.type.startsWith('image/')) return null;
-  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
-  const scale = Math.min(1, 720 / Math.max(bitmap.width, bitmap.height));
+function canvasToWebp(canvas: HTMLCanvasElement, quality: number) {
+  return new Promise<Blob>((resolve, reject) => canvas.toBlob(
+    (result) => result ? resolve(result) : reject(new Error('图片压缩失败')),
+    'image/webp',
+    quality,
+  ));
+}
+
+async function encodeImageVariant(bitmap: ImageBitmap, maxDimension: number, maxBytes: number, name: string) {
+  const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(bitmap.width * scale));
   canvas.height = Math.max(1, Math.round(bitmap.height * scale));
   canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
-  const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(
-    (result) => result ? resolve(result) : reject(new Error('缩略图生成失败')),
-    'image/webp',
-    0.78,
-  ));
-  return new File([blob], 'thumbnail.webp', { type: 'image/webp' });
+
+  let blob = await canvasToWebp(canvas, 0.86);
+  for (const quality of [0.76, 0.66, 0.56]) {
+    if (blob.size <= maxBytes) break;
+    blob = await canvasToWebp(canvas, quality);
+  }
+  // ponytail: bounded main-thread compression; move to a Web Worker if mobile latency becomes measurable.
+  for (let attempt = 0; blob.size > maxBytes && attempt < 5; attempt += 1) {
+    const resize = Math.max(0.6, Math.min(0.9, Math.sqrt(maxBytes / blob.size) * 0.92));
+    canvas.width = Math.max(1, Math.round(canvas.width * resize));
+    canvas.height = Math.max(1, Math.round(canvas.height * resize));
+    canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    blob = await canvasToWebp(canvas, 0.72);
+  }
+  if (blob.size > maxBytes) throw new Error('图片无法压缩到 2MB 内，请换一张图片');
+  return new File([blob], name, { type: 'image/webp' });
+}
+
+async function createImageVariants(file: File) {
+  if (!file.type.startsWith('image/')) return null;
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  try {
+    return {
+      display: await encodeImageVariant(bitmap, 2560, MAX_DISPLAY_IMAGE_SIZE, 'display.webp'),
+      thumbnail: await encodeImageVariant(bitmap, 720, MAX_THUMBNAIL_SIZE, 'thumbnail.webp'),
+    };
+  } finally {
+    bitmap.close();
+  }
 }
 
 function MediaPicker({ file, onChange, currentImage, currentType }: {
@@ -153,7 +183,7 @@ function MediaPicker({ file, onChange, currentImage, currentType }: {
         ) : <span className="dropzone-mark">＋</span>}
         <span className="dropzone-copy">
           <strong>{file ? file.name : currentImage ? '点击替换素材' : '选择照片或视频'}</strong>
-          <small>{file ? `${formatBytes(file.size)} · 点击重新选择` : 'JPEG / PNG / WebP / MP4 / MOV / WebM，最大 10MB'}</small>
+          <small>{file ? `${formatBytes(file.size)} · 点击重新选择` : '图片自动生成 ≤2MB 展示图；视频最大 25MB'}</small>
         </span>
         <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm" onChange={pick} />
       </label>
@@ -177,6 +207,7 @@ export default function Home() {
   const [copyMessage, setCopyMessage] = useState('点击复制上传码');
   const [shareMessage, setShareMessage] = useState('');
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([]);
+  const [galleryLoaded, setGalleryLoaded] = useState(false);
   const successRef = useRef<HTMLDialogElement>(null);
   const shareRef = useRef<HTMLDialogElement>(null);
 
@@ -184,7 +215,8 @@ export default function Home() {
     fetch('/api/gallery')
       .then(async (response) => (await response.json()) as { items?: GalleryItem[] })
       .then((data) => setGalleryItems(data.items || []))
-      .catch(() => setGalleryItems([]));
+      .catch(() => setGalleryItems([]))
+      .finally(() => setGalleryLoaded(true));
   }, []);
 
   useEffect(() => {
@@ -198,7 +230,7 @@ export default function Home() {
 
   function validateMedia(file: File | null, required = true) {
     if (!file && required) return '请选择照片或视频';
-    if (file && file.size > MAX_FILE_SIZE) return '文件超过 10MB，请压缩后再试';
+    if (file && file.size > MAX_FILE_SIZE) return '文件超过 25MB，请压缩后再试';
     if (file && !['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'video/quicktime', 'video/webm'].includes(file.type)) return '只支持 JPEG、PNG、WebP、MP4、MOV 或 WebM';
     return '';
   }
@@ -215,8 +247,11 @@ export default function Home() {
     data.set('image', image!);
     setBusy(true);
     try {
-      const thumbnail = await createThumbnail(image!);
-      if (thumbnail) data.set('thumbnail', thumbnail);
+      const variants = await createImageVariants(image!);
+      if (variants) {
+        data.set('display', variants.display);
+        data.set('thumbnail', variants.thumbnail);
+      }
       const response = await fetch('/api/submissions', { method: 'POST', body: data });
       const result = (await response.json()) as { credential?: string; submission?: GalleryItem; error?: string };
       if (!response.ok) throw new Error(result.error || '上传失败');
@@ -270,8 +305,11 @@ export default function Home() {
     setBusy(true);
     try {
       if (image) {
-        const thumbnail = await createThumbnail(image);
-        if (thumbnail) data.set('thumbnail', thumbnail);
+        const variants = await createImageVariants(image);
+        if (variants) {
+          data.set('display', variants.display);
+          data.set('thumbnail', variants.thumbnail);
+        }
       }
       const response = await fetch(`/api/submissions/${encodeURIComponent(credential)}`, { method: 'PUT', body: data });
       const result = (await response.json()) as Submission & { error?: string };
@@ -375,7 +413,7 @@ export default function Home() {
           </div>
           <div className="hero-facts">
             <span><strong>16</strong> 青春连队</span>
-            <span><strong>10MB</strong> 单份限额</span>
+            <span><strong>{galleryLoaded ? galleryItems.length : '—'}</strong> 总投稿数</span>
           </div>
         </div>
         <div className="pass-card" aria-hidden="true">
@@ -440,7 +478,7 @@ export default function Home() {
               <label><span>故事说明</span><textarea value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} placeholder="写下当时发生了什么（选填）" /></label>
               <MediaPicker file={image} onChange={setImage} />
               {message && <p className="form-message error" role="alert">{message}</p>}
-              <button className="primary-button" disabled={busy}>{busy ? '正在上传…' : '上传素材并生成代码'}<span>→</span></button>
+              <button className="primary-button" disabled={busy}>{busy ? '正在优化并上传…' : '上传素材并生成代码'}<span>→</span></button>
             </form>
           ) : submission ? (
             <form onSubmit={update} className="content-form">

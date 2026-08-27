@@ -6,7 +6,7 @@ export type AppEnv = {
   SESSION_SECRET?: string;
 };
 
-export const MAX_FILE_SIZE = 10 * 1024 * 1024;
+export const MAX_FILE_SIZE = 25 * 1024 * 1024;
 export const ALLOWED_MEDIA_TYPES = new Set([
   'image/jpeg', 'image/png', 'image/webp',
   'video/mp4', 'video/quicktime', 'video/webm',
@@ -45,12 +45,34 @@ export async function ensureSchema(env: AppEnv) {
       image_key TEXT NOT NULL,
       image_name TEXT NOT NULL,
       image_type TEXT NOT NULL,
-      image_size INTEGER NOT NULL CHECK(image_size <= 10485760),
+      image_size INTEGER NOT NULL CHECK(image_size <= 26214400),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )`),
     db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_submissions_credential_hash ON submissions(credential_hash)'),
   ]);
+  const table = await db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'submissions'").first<{ sql: string }>();
+  if (table?.sql.includes('10485760')) {
+    await db.batch([
+      db.prepare('ALTER TABLE submissions RENAME TO submissions_10mb'),
+      db.prepare(`CREATE TABLE submissions (
+        id TEXT PRIMARY KEY,
+        credential_hash TEXT NOT NULL UNIQUE,
+        company TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        description TEXT NOT NULL DEFAULT '',
+        image_key TEXT NOT NULL,
+        image_name TEXT NOT NULL,
+        image_type TEXT NOT NULL,
+        image_size INTEGER NOT NULL CHECK(image_size <= 26214400),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`),
+      db.prepare('INSERT INTO submissions SELECT * FROM submissions_10mb'),
+      db.prepare('DROP TABLE submissions_10mb'),
+      db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_submissions_credential_hash ON submissions(credential_hash)'),
+    ]);
+  }
   schemaReady = true;
 }
 
